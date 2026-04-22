@@ -1,6 +1,16 @@
 server:
-  port: 8080
+  port: 8080  
 
 spring:
   application:
     name: dbms-backend
+
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1
+    username: sa
+    password: 
+
+logging:
+  level:
+    org.springframework.jdbc: DEBUG
