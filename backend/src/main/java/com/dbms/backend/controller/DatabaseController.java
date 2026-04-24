@@ -28,30 +28,18 @@ public class DatabaseController {
 
     @PostMapping
     public ApiResponse<Void> createDatabase(@RequestBody CreateDatabaseRequest request) {
-        try {
-            applicationService.createDatabase(request.getDbName());
-            return ApiResponse.ok("数据库创建成功", null);
-        } catch (Exception e) {
-            return ApiResponse.fail(e.getMessage());
-        }
+        applicationService.createDatabase(request.getDbName());
+        return ApiResponse.ok("数据库创建成功", null);
     }
 
     @GetMapping
     public ApiResponse<List<DatabaseInfo>> listDatabases() {
-        try {
-            return ApiResponse.ok("查询成功", applicationService.listDatabases());
-        } catch (Exception e) {
-            return ApiResponse.fail(e.getMessage());
-        }
+        return ApiResponse.ok("查询成功", applicationService.listDatabases());
     }
 
     @DeleteMapping("/{databaseName}")
     public ApiResponse<Void> dropDatabase(@PathVariable String databaseName) {
-        try {
-            applicationService.dropDatabase(databaseName);
-            return ApiResponse.ok("数据库删除成功", null);
-        } catch (Exception e) {
-            return ApiResponse.fail(e.getMessage());
-        }
+        applicationService.dropDatabase(databaseName);
+        return ApiResponse.ok("数据库删除成功", null);
     }
 }
