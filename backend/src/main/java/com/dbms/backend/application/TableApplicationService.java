@@ -7,6 +7,7 @@ import com.dbms.backend.model.TableInfo;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class TableApplicationService {
@@ -34,5 +35,11 @@ public class TableApplicationService {
     public List<TableInfo> listTables(String databaseName) {
         domainService.validateDatabaseName(databaseName);
         return tableGateway.listTables(databaseName).stream().map(TableInfo::new).toList();
+    }
+
+    public Map<String, Object> getTableDetail(String databaseName, String tableName) {
+        domainService.validateDatabaseName(databaseName);
+        domainService.validateIdentifier(tableName, "表名");
+        return tableGateway.getTableDetail(databaseName, tableName);
     }
 }

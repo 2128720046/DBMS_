@@ -62,6 +62,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { getHealth } from '../api/http'
 
 const router = useRouter()
 
@@ -78,8 +79,11 @@ const recentSql = ref([
   { time: '2026-04-22 10:10', sql: 'DROP TABLE not_exist_table', status: 'error', cost: 2 }
 ])
 
-const checkHealth = () => {
-    ElMessage.success('后端服务健康 (正常)')
+const checkHealth = async () => {
+  const res = await getHealth()
+  const status = res.data?.status || 'UNKNOWN'
+  const uptime = res.data?.uptime || 0
+  ElMessage.success(`后端状态: ${status}，运行时长: ${uptime}s`)
 }
 </script>
 

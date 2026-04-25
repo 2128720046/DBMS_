@@ -100,3 +100,10 @@
 
 这样开发，代码不会乱，新增需求也能稳定扩展
 可以让AI辅助按照当前的架构完成其余功能模块的开发
+
+## 7. H2 融入约定（当前已执行）
+
+- `src/main/h2` 目录保留为参考源码区，不参与当前 Maven 编译与运行时装配。
+- 实际引擎能力通过 `src/main/java/com/dbms/backend` 的 `domain/spi + infrastructure/storage` 进行接入。
+- 已接入模块：数据库、表、记录、索引、完整性、事务、安全、备份恢复。
+- 通过 `application.yml` 下 `dbms.engine.capabilities.*` 控制模块开关，实现“逻辑删减”而非修改 H2 内核源码。

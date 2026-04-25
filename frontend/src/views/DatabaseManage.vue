@@ -39,61 +39,69 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { createDatabase, dropDatabase, listDatabases } from '../api/dbms'
 
 const router = useRouter()
 
-const tableData = ref([
-  { name: 'db_test_1', size: '150', createTime: '2026-04-01' },
-  { name: 'db_online', size: '1024', createTime: '2026-04-10' }
-])
+const tableData = ref([])
 
 const dialogVisible = ref(false)
 const form = ref({
   name: ''
 })
 
-const fetchDatabases = () => {
-    ElMessage.success('列表已刷新')
+const fetchDatabases = async () => {
+  const res = await listDatabases()
+  tableData.value = (res.data || []).map((item) => ({
+    name: item.name,
+    size: item.size || '-',
+    createTime: item.createTime || '-'
+  }))
 }
 
-const handleCreate = () => {
-    if(!form.value.name) return ElMessage.warning('请输入名称')
-    tableData.value.push({
-        name: form.value.name,
-        size: '0',
-        createTime: new Date().toISOString().split('T')[0]
-    })
-    dialogVisible.value = false
-    ElMessage.success('创建成功')
-    form.value = { name: '' }
+const handleCreate = async () => {
+  if (!form.value.name) return ElMessage.warning('请输入名称')
+  await createDatabase({ name: form.value.name })
+  dialogVisible.value = false
+  form.value = { name: '' }
+  await fetchDatabases()
+  ElMessage.success('创建成功')
 }
 
 const handleDelete = (row) => {
-    ElMessageBox.confirm(
-        `确定永久删除数据库 ${row.name} 吗？`,
-        '警告',
-        {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
-          type: 'warning',
-        }
-      )
-        .then(() => {
-          tableData.value = tableData.value.filter(item => item.name !== row.name)
-          ElMessage({ type: 'success', message: '删除成功' })
-        })
-        .catch(() => {
-          ElMessage({ type: 'info', message: '已取消删除' })
-        })
+  ElMessageBox.confirm(
+    `确定永久删除数据库 ${row.name} 吗？`,
+    '警告',
+    {
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  )
+    .then(async () => {
+      await dropDatabase(row.name)
+      await fetchDatabases()
+      ElMessage({ type: 'success', message: '删除成功' })
+    })
+    .catch(() => {
+      ElMessage({ type: 'info', message: '已取消删除' })
+    })
 }
 
 const openConsole = (row) => {
-    // Navigate and set context context via store/query params
-    router.push({ path: '/sql', query: { db: row.name } })
+  router.push({ path: '/sql', query: { db: row.name } })
 }
+
+onMounted(async () => {
+  try {
+    await fetchDatabases()
+  } catch (error) {
+    ElMessage.error(error.message || '加载数据库列表失败')
+  }
+})
 </script>
 
 <style scoped>

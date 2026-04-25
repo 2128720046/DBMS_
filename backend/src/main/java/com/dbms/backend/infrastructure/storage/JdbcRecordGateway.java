@@ -1,6 +1,7 @@
 package com.dbms.backend.infrastructure.storage;
 
 import com.dbms.backend.domain.DatabaseDomainService;
+import com.dbms.backend.domain.EngineCapabilityPolicy;
 import com.dbms.backend.domain.spi.RecordGateway;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -14,15 +15,20 @@ import java.util.Map;
 public class JdbcRecordGateway implements RecordGateway {
 
     private final DatabaseDomainService domainService;
+    private final EngineCapabilityPolicy capabilityPolicy;
     private final NamedParameterJdbcTemplate namedJdbc;
 
-    public JdbcRecordGateway(DatabaseDomainService domainService, NamedParameterJdbcTemplate namedJdbc) {
+    public JdbcRecordGateway(DatabaseDomainService domainService,
+                             EngineCapabilityPolicy capabilityPolicy,
+                             NamedParameterJdbcTemplate namedJdbc) {
         this.domainService = domainService;
+        this.capabilityPolicy = capabilityPolicy;
         this.namedJdbc = namedJdbc;
     }
 
     @Override
     public int insert(String schemaName, String tableName, Map<String, Object> values) {
+        capabilityPolicy.assertRecordEnabled();
         if (values == null || values.isEmpty()) {
             throw new IllegalArgumentException("插入数据不能为空");
         }
@@ -47,6 +53,7 @@ public class JdbcRecordGateway implements RecordGateway {
 
     @Override
     public List<Map<String, Object>> query(String schemaName, String tableName, Map<String, Object> filters, int limit, int offset) {
+        capabilityPolicy.assertRecordEnabled();
         MapSqlParameterSource source = new MapSqlParameterSource();
         String where = buildWhereClause(filters, source, "f");
 
@@ -60,6 +67,7 @@ public class JdbcRecordGateway implements RecordGateway {
 
     @Override
     public int update(String schemaName, String tableName, Map<String, Object> filters, Map<String, Object> values) {
+        capabilityPolicy.assertRecordEnabled();
         if (values == null || values.isEmpty()) {
             throw new IllegalArgumentException("更新数据不能为空");
         }
@@ -84,6 +92,7 @@ public class JdbcRecordGateway implements RecordGateway {
 
     @Override
     public int delete(String schemaName, String tableName, Map<String, Object> filters) {
+        capabilityPolicy.assertRecordEnabled();
         if (filters == null || filters.isEmpty()) {
             throw new IllegalArgumentException("删除操作必须提供过滤条件");
         }
