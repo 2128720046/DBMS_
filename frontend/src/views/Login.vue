@@ -29,6 +29,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import { login } from '../api/dbms'
 
 const router = useRouter()
 const loginFormRef = ref(null)
@@ -52,12 +53,19 @@ const handleLogin = async (formEl) => {
   if (!formEl) return
   await formEl.validate((valid, fields) => {
     if (valid) {
-      if(loginForm.username === 'admin' && loginForm.password === '123456') {
-        ElMessage.success('登录成功')
-        router.push('/dashboard')
-      } else {
-         ElMessage.error('账号或密码错误 (测试admin/123456)')
-      }
+      login({ username: loginForm.username, password: loginForm.password })
+        .then((response) => {
+          const payload = response?.data || {}
+          if (payload.token) {
+            localStorage.setItem('dbms-token', payload.token)
+          }
+          localStorage.setItem('dbms-user', JSON.stringify(payload))
+          ElMessage.success('登录成功')
+          router.push('/dashboard')
+        })
+        .catch((error) => {
+          ElMessage.error(error.message || '账号或密码错误')
+        })
     } else {
       console.log('error submit!', fields)
     }

@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -39,32 +40,53 @@ public class JdbcTableGateway implements TableGateway {
     @Override
     public void createTable(String schemaName, String tableName, List<ColumnDefinition> columns) {
         capabilityPolicy.assertTableEnabled();
-        if (columns == null || columns.isEmpty()) {
-            throw new IllegalArgumentException("列定义不能为空");
-        }
-
-        List<String> columnSql = new ArrayList<>();
-        for (ColumnDefinition column : columns) {
-            if (column == null) {
-                throw new IllegalArgumentException("列定义不能为空对象");
-            }
-            String quotedName = domainService.quoteIdentifier(column.getName(), "列名");
-            String type = normalizeType(column.getType());
-            boolean nullable = column.getNullable() == null || column.getNullable();
-            columnSql.add(quotedName + " " + type + (nullable ? "" : " NOT NULL"));
-        }
-
-        String sql = "CREATE TABLE IF NOT EXISTS " + qualifiedTable(schemaName, tableName)
-                + " (" + String.join(", ", columnSql) + ")";
-        capabilityPolicy.assertSqlAllowed(sql, java.util.Set.of("CREATE TABLE"));
+        String sql = buildCreateTableSql(schemaName, tableName, columns);
+        capabilityPolicy.assertSqlAllowed(sql, Set.of("CREATE TABLE"));
         jdbcTemplate.execute(sql);
+    }
+
+    @Override
+    public void alterTableStructure(String schemaName, String tableName, List<ColumnDefinition> columns) {
+        capabilityPolicy.assertTableEnabled();
+        jdbcTemplate.execute((ConnectionCallback<Void>) connection -> {
+            String tempTableName = tableName + "__TMP";
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("DROP TABLE IF EXISTS " + qualifiedTable(schemaName, tempTableName));
+                statement.execute(buildCreateTableSql(schemaName, tempTableName, columns));
+
+                List<String> existingColumns = readColumnNames(connection.getMetaData(), schemaName, tableName);
+                List<String> desiredColumns = columns.stream()
+                        .map(ColumnDefinition::getName)
+                        .map(this::quotedIdentifier)
+                        .toList();
+                List<String> sharedColumns = new ArrayList<>();
+                for (String columnName : desiredColumns) {
+                    if (existingColumns.contains(columnName)) {
+                        sharedColumns.add(columnName);
+                    }
+                }
+
+                if (!sharedColumns.isEmpty()) {
+                    String insertSql = "INSERT INTO " + qualifiedTable(schemaName, tempTableName)
+                            + " (" + String.join(", ", sharedColumns) + ") SELECT " + String.join(", ", sharedColumns)
+                            + " FROM " + qualifiedTable(schemaName, tableName);
+                    capabilityPolicy.assertSqlAllowed(insertSql, Set.of("INSERT INTO"));
+                    statement.execute(insertSql);
+                }
+
+                statement.execute("DROP TABLE " + qualifiedTable(schemaName, tableName));
+                statement.execute("ALTER TABLE " + qualifiedTable(schemaName, tempTableName)
+                        + " RENAME TO " + quotedIdentifier(tableName));
+            }
+            return null;
+        });
     }
 
     @Override
     public void dropTable(String schemaName, String tableName) {
         capabilityPolicy.assertTableEnabled();
         String sql = "DROP TABLE IF EXISTS " + qualifiedTable(schemaName, tableName);
-        capabilityPolicy.assertSqlAllowed(sql, java.util.Set.of("DROP TABLE"));
+        capabilityPolicy.assertSqlAllowed(sql, Set.of("DROP TABLE"));
         jdbcTemplate.execute(sql);
     }
 
@@ -171,9 +193,54 @@ public class JdbcTableGateway implements TableGateway {
         });
     }
 
+    private String buildCreateTableSql(String schemaName, String tableName, List<ColumnDefinition> columns) {
+        if (columns == null || columns.isEmpty()) {
+            throw new IllegalArgumentException("列定义不能为空");
+        }
+        List<String> columnSql = new ArrayList<>();
+        List<String> primaryKeys = new ArrayList<>();
+        List<String> uniqueKeys = new ArrayList<>();
+        for (ColumnDefinition column : columns) {
+            if (column == null) {
+                throw new IllegalArgumentException("列定义不能为空对象");
+            }
+            String quotedName = domainService.quoteIdentifier(column.getName(), "列名");
+            String type = normalizeType(column.getType());
+            boolean nullable = column.getNullable() == null || column.getNullable();
+            columnSql.add(quotedName + " " + type + (nullable ? "" : " NOT NULL"));
+            if (Boolean.TRUE.equals(column.getPk())) {
+                primaryKeys.add(quotedName);
+            }
+            if (Boolean.TRUE.equals(column.getUq())) {
+                uniqueKeys.add(quotedName);
+            }
+        }
+        if (!primaryKeys.isEmpty()) {
+            columnSql.add("PRIMARY KEY (" + String.join(", ", primaryKeys) + ")");
+        }
+        for (String uniqueKey : uniqueKeys) {
+            columnSql.add("UNIQUE (" + uniqueKey + ")");
+        }
+        return "CREATE TABLE " + qualifiedTable(schemaName, tableName) + " (" + String.join(", ", columnSql) + ")";
+    }
+
+    private List<String> readColumnNames(DatabaseMetaData metaData, String schemaName, String tableName) throws SQLException {
+        List<String> columnNames = new ArrayList<>();
+        try (ResultSet resultSet = metaData.getColumns(null, schemaName.toUpperCase(), tableName.toUpperCase(), null)) {
+            while (resultSet.next()) {
+                columnNames.add(quotedIdentifier(resultSet.getString("COLUMN_NAME")));
+            }
+        }
+        return columnNames;
+    }
+
     private String qualifiedTable(String schemaName, String tableName) {
         return domainService.quoteIdentifier(schemaName, "数据库名") + "."
                 + domainService.quoteIdentifier(tableName, "表名");
+    }
+
+    private String quotedIdentifier(String identifier) {
+        return domainService.quoteIdentifier(identifier, "列名");
     }
 
     private String normalizeType(String type) {

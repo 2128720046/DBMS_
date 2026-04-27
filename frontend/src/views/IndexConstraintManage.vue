@@ -85,9 +85,7 @@
            </el-form-item>
             <el-form-item label="包含字段">
                <el-select v-model="newIndex.columns" multiple placeholder="选择字段 (可多选)" style="width: 100%">
-                   <el-option label="id" value="id" />
-                   <el-option label="username" value="username" />
-                   <el-option label="status" value="status" />
+                 <el-option v-for="column in availableColumns" :key="column" :label="column" :value="column" />
                </el-select>
            </el-form-item>
         </el-form>
@@ -104,6 +102,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Check } from '@element-plus/icons-vue'
+import { checkConstraints as apiCheckConstraints, createIndex as apiCreateIndex, dropConstraint as apiDropConstraint, dropIndex as apiDropIndex, getTableDetail, listConstraints as apiListConstraints, listIndexes as apiListIndexes, rebuildIndex as apiRebuildIndex } from '../api/dbms'
 
 const route = useRoute()
 const router = useRouter()
@@ -113,6 +112,7 @@ const activeTab = ref('index')
 
 const indexes = ref([])
 const constraints = ref([])
+const availableColumns = ref([])
 
 const dialogVisible = ref(false)
 const newIndex = ref({ name: '', type: 'NORMAL', columns: [] })
@@ -122,34 +122,55 @@ onMounted(() => {
       currentDb.value = route.query.db
       currentTable.value = route.query.table
       
-      // Mock fetch
       refreshData()
    }
 })
 
-const refreshData = () => {
-    indexes.value = [
-        { name: 'PRIMARY', type: 'PRIMARY', columns: 'id' },
-        { name: 'uk_username', type: 'UNIQUE', columns: 'username' },
-        { name: 'idx_status', type: 'NORMAL', columns: 'status' }
-    ]
-    constraints.value = [
-        { name: 'PRIMARY', type: 'PRIMARY KEY', definition: 'PRIMARY KEY (`id`)' },
-        { name: 'uk_username', type: 'UNIQUE KEY', definition: 'UNIQUE KEY (`username`)' },
-        { name: 'chk_status', type: 'CHECK', definition: 'CHECK (`status` IN (0, 1))' }
-    ]
-    if (route.query.table) ElMessage.success('索引与约束列表已刷新')
+const refreshData = async () => {
+    try {
+        const [indexResp, constraintResp, detailResp] = await Promise.all([
+          apiListIndexes(currentDb.value, currentTable.value),
+          apiListConstraints(currentDb.value, currentTable.value),
+          getTableDetail(currentDb.value, currentTable.value)
+        ])
+        indexes.value = (indexResp?.data || []).map((item) => ({
+          name: item.name,
+          type: item.unique ? 'UNIQUE' : 'NORMAL',
+          columns: Array.isArray(item.columns) ? item.columns.join(', ') : String(item.column || '')
+        }))
+        constraints.value = (constraintResp?.data || []).map((item) => ({
+          name: item.name,
+          type: item.type,
+          definition: `${item.type} (${Array.isArray(item.columns) ? item.columns.join(', ') : ''})${item.reference ? ` -> ${item.reference}` : ''}`
+        }))
+        availableColumns.value = (detailResp?.data?.columns || []).map((column) => column.name)
+        if (route.query.table) ElMessage.success('索引与约束列表已刷新')
+    } catch (error) {
+        ElMessage.error(error.message || '刷新索引与约束失败')
+    }
 }
 
 // Index Operations
-const rebuildIndex = (row) => {
-    ElMessage.success(`正在重建索引 ${row.name}... (Mock)`)
+const rebuildIndex = async (row) => {
+    try {
+        await apiRebuildIndex(currentDb.value, currentTable.value, row.name)
+        ElMessage.success(`索引 ${row.name} 重建成功`)
+        refreshData()
+    } catch (error) {
+        ElMessage.error(error.message || '重建失败')
+    }
 }
 
 const dropIndex = (index, row) => {
     ElMessageBox.confirm(`确定删除索引 ${row.name} 吗？此操作可能影响查询性能。`, '警告', { type: 'warning' }).then(() => {
-        indexes.value.splice(index, 1)
-        ElMessage.success('已删除')
+        apiDropIndex(currentDb.value, currentTable.value, row.name)
+          .then(() => {
+            indexes.value.splice(index, 1)
+            ElMessage.success('已删除')
+          })
+          .catch((error) => {
+            ElMessage.error(error.message || '删除失败')
+          })
     }).catch(()=>{})
 }
 
@@ -157,29 +178,48 @@ const handleCreateIndex = () => {
     if (!newIndex.value.name || !newIndex.value.columns.length) {
         return ElMessage.warning('名称和字段不能为空')
     }
-    indexes.value.push({
+  if (newIndex.value.type === 'FULLTEXT') {
+    return ElMessage.warning('当前版本仅支持普通索引和唯一索引')
+  }
+    apiCreateIndex(currentDb.value, currentTable.value, {
         name: newIndex.value.name,
-        type: newIndex.value.type,
-        columns: newIndex.value.columns.join(', ')
+        unique: newIndex.value.type === 'UNIQUE',
+        columns: newIndex.value.columns
+    }).then(() => {
+        dialogVisible.value = false
+        newIndex.value = { name: '', type: 'NORMAL', columns: [] }
+        ElMessage.success('索引创建成功')
+        refreshData()
+    }).catch((error) => {
+        ElMessage.error(error.message || '索引创建失败')
     })
-    dialogVisible.value = false
-    newIndex.value = { name: '', type: 'NORMAL', columns: [] }
-    ElMessage.success('索引创建成功')
 }
 
 // Constraint Operations
-const checkConstraints = () => {
-    // Call POST /api/databases/{databaseName}/tables/{tableName}/constraints/check
-    ElMessage.success(`正在对全表 ${currentTable.value} 进行数据合规校验...`)
-    setTimeout(() => {
-        ElMessageBox.alert('校验完成：未发现违反约束的数据行。', '校验结果', { type: 'success' })
-    }, 1500)
+const checkConstraints = async () => {
+    try {
+        const response = await apiCheckConstraints(currentDb.value, currentTable.value)
+        const result = response?.data || {}
+        ElMessageBox.alert(
+          result.passed ? '校验完成：未发现违反约束的数据行。' : `校验完成：发现 ${result.issues?.length || 0} 条问题。`,
+          '校验结果',
+          { type: result.passed ? 'success' : 'warning' }
+        )
+    } catch (error) {
+        ElMessage.error(error.message || '校验失败')
+    }
 }
 
 const dropConstraint = (index, row) => {
     ElMessageBox.confirm(`确定删除约束 ${row.name} 吗？`, '警告', { type: 'warning' }).then(() => {
-        constraints.value.splice(index, 1)
-        ElMessage.success('已删除')
+        apiDropConstraint(currentDb.value, currentTable.value, row.name)
+          .then(() => {
+            constraints.value.splice(index, 1)
+            ElMessage.success('已删除')
+          })
+          .catch((error) => {
+            ElMessage.error(error.message || '删除失败')
+          })
     }).catch(()=>{})
 }
 

@@ -1,4 +1,5 @@
-import { createRouter, createWebHistory } from 'vue-router'
+﻿import { createRouter, createWebHistory } from 'vue-router'
+import Layout from '../views/Layout.vue'
 
 const routes = [
   {
@@ -8,14 +9,14 @@ const routes = [
   },
   {
     path: '/',
-    component: () => import('../views/Layout.vue'),
+    component: Layout,
     redirect: '/dashboard',
     children: [
       {
         path: 'dashboard',
         name: 'Dashboard',
         component: () => import('../views/Dashboard.vue'),
-        meta: { title: '首页 / 仪表盘' }
+        meta: { title: '仪表盘' }
       },
       {
         path: 'database',
@@ -42,10 +43,10 @@ const routes = [
         meta: { title: '记录管理' }
       },
       {
-        path: 'index-constraint',
-        name: 'IndexConstraintManage',
-        component: () => import('../views/IndexConstraintManage.vue'),
-        meta: { title: '索引与约束' }
+        path: 'sql',
+        name: 'SqlConsole',
+        component: () => import('../views/SqlConsole.vue'),
+        meta: { title: 'SQL 控制台' }
       },
       {
         path: 'backup',
@@ -54,19 +55,19 @@ const routes = [
         meta: { title: '备份恢复' }
       },
       {
+        path: 'index-constraint',
+        name: 'IndexConstraintManage',
+        component: () => import('../views/IndexConstraintManage.vue'),
+        meta: { title: '索引与约束管理' }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/SystemSettings.vue'),
         meta: { title: '系统设置' }
-      },
-      {
-        path: 'sql',
-        name: 'SqlConsole',
-        component: () => import('../views/SqlConsole.vue'),
-        meta: { title: 'SQL 控制台' }
       }
     ]
-  }
+  },
 ]
 
 const router = createRouter({

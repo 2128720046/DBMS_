@@ -26,6 +26,12 @@ public class TableApplicationService {
         tableGateway.createTable(databaseName, tableName, columns);
     }
 
+    public void updateTableStructure(String databaseName, String tableName, List<ColumnDefinition> columns) {
+        domainService.validateDatabaseName(databaseName);
+        domainService.validateIdentifier(tableName, "表名");
+        tableGateway.alterTableStructure(databaseName, tableName, columns);
+    }
+
     public void dropTable(String databaseName, String tableName) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");

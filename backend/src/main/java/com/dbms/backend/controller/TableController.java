@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -39,6 +40,17 @@ public class TableController {
                                          @RequestBody CreateTableRequest request) {
         tableApplicationService.createTable(databaseName, request.getTableName(), request.getColumns());
         return ApiResponse.ok("数据表创建成功", null);
+    }
+
+    /**
+     * 更新表结构，字段管理页提交的列定义将通过该接口替换到 H2。
+     */
+    @PutMapping("/{tableName}")
+    public ApiResponse<Void> updateTableStructure(@PathVariable String databaseName,
+                                                  @PathVariable String tableName,
+                                                  @RequestBody CreateTableRequest request) {
+        tableApplicationService.updateTableStructure(databaseName, tableName, request.getColumns());
+        return ApiResponse.ok("表结构更新成功", null);
     }
 
     /**

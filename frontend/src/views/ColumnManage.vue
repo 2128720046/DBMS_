@@ -122,6 +122,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Sort, ArrowDown } from '@element-plus/icons-vue'
+import { getTableDetail, updateTableStructure } from '../api/dbms'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,17 +135,45 @@ const genId = () => Math.random().toString(36).substr(2, 9)
 
 const columns = ref([])
 
+const splitType = (typeText) => {
+    const match = String(typeText || '').match(/^([A-Za-z_]+)(?:\(([^)]+)\))?$/)
+    if (!match) {
+        return { type: typeText || 'VARCHAR', length: '' }
+    }
+    return {
+        type: match[1].toUpperCase(),
+        length: match[2] || ''
+    }
+}
+
 onMounted(() => {
    if(route.query.db && route.query.table) {
       currentDb.value = route.query.db
       currentTable.value = route.query.table
-      
-      // Mock fetch
-      columns.value = [
-          { id: genId(), name: 'id', type: 'INT', length: '', nn: true, pk: true, uq: false, ai: true, defaultVal: '', comment: '主键ID' },
-          { id: genId(), name: 'username', type: 'VARCHAR', length: '50', nn: true, pk: false, uq: true, ai: false, defaultVal: '', comment: '用户名' },
-          { id: genId(), name: 'status', type: 'INT', length: '1', nn: false, pk: false, uq: false, ai: false, defaultVal: '1', comment: '状态 1启用 0禁用' }
-      ]
+
+        getTableDetail(currentDb.value, currentTable.value)
+          .then((response) => {
+             const list = response?.data?.columns || response?.data || response?.columns || []
+             columns.value = list.map((column) => {
+                 const typeParts = splitType(column.type)
+                 return {
+                    id: genId(),
+                    name: column.name,
+                    type: typeParts.type,
+                    length: typeParts.length,
+                    nn: Boolean(column.nn),
+                    pk: column.key === 'PRI',
+                    uq: false,
+                    ai: false,
+                    defaultVal: column.default || '',
+                    comment: ''
+                 }
+             })
+             ElMessage.success('字段列表已加载')
+          })
+          .catch((error) => {
+             ElMessage.error(error.message || '加载字段失败')
+          })
    }
 })
 
@@ -189,9 +218,19 @@ const saveChanges = async () => {
 
     saving.value = true
     try {
-        await new Promise(resolve => setTimeout(resolve, 800)) // mock delay
+                const payload = {
+                    name: currentTable.value,
+                    columns: columns.value.map((col) => ({
+                        name: col.name.trim(),
+                        type: col.type,
+                        length: col.length ? Number(col.length) : undefined,
+                        nullable: !col.pk && Boolean(col.nn),
+                        pk: Boolean(col.pk),
+                        uq: Boolean(col.uq)
+                    }))
+                }
+                await updateTableStructure(currentDb.value, currentTable.value, payload)
         ElMessage.success('表结构变更保存成功')
-        // Option to route back or stay
     } finally {
         saving.value = false
     }
