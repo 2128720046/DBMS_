@@ -1,0 +1,32 @@
+server:
+  port: 8080  
+
+spring:
+  application:
+    name: dbms-backend
+
+  datasource:
+    driver-class-name: org.h2.Driver
+    url: jdbc:h2:file:./data/dbms;AUTO_SERVER=TRUE # 文件数据库，便于演示与数据持久化
+    username: sa
+    password: 
+
+  h2:
+    console:
+      enabled: false
+
+dbms:
+  engine:
+    capabilities:
+      schema: true
+      table: true
+      record: true
+      index: true
+      constraint: true
+      transaction: true
+      security: true
+      backup: true
+
+logging:
+  level:
+    org.springframework.jdbc: DEBUG

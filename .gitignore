@@ -1,0 +1,46 @@
+# Java 编译产物
+*.class
+*.jar
+*.war
+*.ear
+
+# 常见构建目录
+out/
+build/
+target/
+bin/
+dist/
+
+# 前端依赖与缓存
+node_modules/
+.npm/
+.pnpm-store/
+
+# 前端环境文件
+.env
+.env.*
+
+# 临时编译清单
+.javac-sources.txt
+
+# 日志与缓存
+*.log
+*.tmp
+
+# IDE 文件
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+
+# VS Code 本地配置
+.vscode/
+
+# Python 虚拟环境与缓存
+.venv/
+__pycache__/
+
+# 系统文件
+Thumbs.db
+.DS_Store
