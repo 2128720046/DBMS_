@@ -31,4 +31,5 @@ public class DatabaseApplicationService {
     public List<DatabaseInfo> listDatabases() {
         return schemaGateway.listSchemas().stream().map(DatabaseInfo::new).toList();
     }
+    
 }

@@ -33,4 +33,8 @@ public class DatabaseDomainService {
             throw new IllegalArgumentException(invalidMessage);
         }
     }
+    public String normalizeDatabaseName(String dbName) {
+    validateDatabaseName(dbName);
+    return dbName.toUpperCase();   // 统一转大写
+}
 }

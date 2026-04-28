@@ -12,6 +12,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -19,7 +20,8 @@ import java.util.Set;
 public class SqlApplicationService {
 
     private static final Set<String> ALLOWED_PREFIX = Set.of(
-            "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CALL"
+            "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CALL",
+            "CREATE SCHEMA", "DROP SCHEMA", "SET SCHEMA" 
     );
 
     private final DatabaseDomainService domainService;
@@ -34,10 +36,43 @@ public class SqlApplicationService {
         this.dataSource = dataSource;
     }
 
+    
+    // 在 SqlApplicationService 类中添加一个方法
+private String translateMySqlToH2(String sql) {
+    String upper = sql.trim().toUpperCase(Locale.ROOT);
+    if (upper.startsWith("CREATE DATABASE")) {
+        String dbName = sql.substring(upper.indexOf("DATABASE") + "DATABASE".length()).trim();
+        // 去除结尾分号
+        if (dbName.endsWith(";")) dbName = dbName.substring(0, dbName.length() - 1);
+        dbName = dbName.trim();
+        return "CREATE SCHEMA IF NOT EXISTS " + domainService.quoteIdentifier(dbName, "数据库名");
+    }
+    if (upper.startsWith("DROP DATABASE")) {
+        String dbName = sql.substring(upper.indexOf("DATABASE") + "DATABASE".length()).trim();
+        if (dbName.endsWith(";")) dbName = dbName.substring(0, dbName.length() - 1);
+        dbName = dbName.trim();
+        return "DROP SCHEMA IF EXISTS " + domainService.quoteIdentifier(dbName, "数据库名") + " CASCADE";
+    }
+    if (upper.startsWith("SHOW DATABASES")) {
+        return "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA";
+    }
+    // 可以继续添加 USE database → SET SCHEMA "database" 等
+    if (upper.startsWith("USE ")) {
+        String dbName = sql.substring(3).trim();
+        if (dbName.endsWith(";")) dbName = dbName.substring(0, dbName.length() - 1);
+        dbName = dbName.trim();
+        return "SET SCHEMA " + domainService.quoteIdentifier(dbName, "数据库名");
+    }
+    return sql;
+}
+
+  
     public Map<String, Object> execute(String databaseName, String sql) {
         if (sql == null || sql.isBlank()) {
             throw new IllegalArgumentException("SQL 不能为空");
         }
+
+        sql = translateMySqlToH2(sql);
         capabilityPolicy.assertSqlAllowed(sql, ALLOWED_PREFIX);
 
         String normalizedDb = null;

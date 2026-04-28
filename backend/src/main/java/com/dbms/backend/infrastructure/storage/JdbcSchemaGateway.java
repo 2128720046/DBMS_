@@ -28,27 +28,30 @@ public class JdbcSchemaGateway implements DatabaseSchemaGateway {
     @Override
     public void createSchema(String schemaName) {
         capabilityPolicy.assertSchemaEnabled();
-        String sql = "CREATE SCHEMA IF NOT EXISTS " + quoteSchema(schemaName);
-        capabilityPolicy.assertSqlAllowed(sql, java.util.Set.of("CREATE SCHEMA"));
+        String normalized = domainService.normalizeDatabaseName(schemaName);
+        String sql = "CREATE SCHEMA IF NOT EXISTS " + domainService.quoteIdentifier(normalized, "数据库名");        capabilityPolicy.assertSqlAllowed(sql, java.util.Set.of("CREATE SCHEMA"));
         jdbcTemplate.execute(sql);
     }
 
     @Override
     public void dropSchema(String schemaName) {
         capabilityPolicy.assertSchemaEnabled();
-        String sql = "DROP SCHEMA IF EXISTS " + quoteSchema(schemaName) + " CASCADE";
+        String normalized = domainService.normalizeDatabaseName(schemaName);
+        String sql = "DROP SCHEMA IF EXISTS " + domainService.quoteIdentifier(normalized, "数据库名") + " CASCADE";
         capabilityPolicy.assertSqlAllowed(sql, java.util.Set.of("DROP SCHEMA"));
         jdbcTemplate.execute(sql);
     }
 
     @Override
     public List<String> listSchemas() {
-        capabilityPolicy.assertSchemaEnabled();
-        return jdbcTemplate.queryForList(
-                "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA ORDER BY SCHEMA_NAME",
-                String.class
-        );
-    }
+    capabilityPolicy.assertSchemaEnabled();
+    return jdbcTemplate.queryForList(
+        "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA " +
+        "WHERE SCHEMA_NAME NOT IN ('INFORMATION_SCHEMA', 'PUBLIC') " +
+        "ORDER BY SCHEMA_NAME",
+        String.class
+    );
+}
 
     private String quoteSchema(String schemaName) {
         return domainService.quoteIdentifier(schemaName, "数据库名");

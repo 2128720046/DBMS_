@@ -6,12 +6,20 @@
           <el-tag size="small" effect="plain" type="info">当前库: {{ currentDb || '未选择' }}</el-tag>
         </div>
         <div class="header-tools">
-          <el-button size="small" type="success" icon="VideoPlay" @click="executeSql">执行 (F9)</el-button>
+          <el-dropdown split-button type="success" size="small" @click="executeSql('selected')" @command="handleSqlExecuteCommand" style="margin-right: 12px">
+            执行单行或选中 (F9)
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="all">执行全部脚本 (Alt+X)</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
           <el-button size="small" link icon="MagicStick" @click="formatSql">格式化</el-button>
           <el-button size="small" link icon="Delete" @click="clearEditor">清空</el-button>
         </div>
       </div>
       <el-input
+        ref="sqlInputRef"
         v-model="sqlCode"
         type="textarea"
         resize="none"
@@ -66,6 +74,7 @@ const route = useRoute()
 const currentDb = ref('')
 const sqlCode = ref('')
 const activeTab = ref('result')
+const sqlInputRef = ref()
 
 const executionResult = ref({ type: null, data: null, status: 'info', columns: [] })
 const history = ref([])
@@ -79,8 +88,54 @@ onMounted(() => {
    }
 })
 
-const executeSql = async () => {
-  if (!sqlCode.value.trim()) return ElMessage.warning('请输入 SQL 语句')
+const handleSqlExecuteCommand = (cmd) => {
+  executeSql(cmd)
+}
+
+const extractTargetSql = (mode) => {
+  if (mode === 'all') return sqlCode.value.trim();
+
+  // Try to find selected or current line
+  const textarea = sqlInputRef.value?.textarea || document.querySelector('.monaco-like-editor textarea');
+  if (textarea) {
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    
+    if (start !== end) {
+      // User highlighted text
+      return sqlCode.value.substring(start, end).trim();
+    } else {
+      // User didn't highlight, find current line or statement
+      const fullText = sqlCode.value;
+      const statements = fullText.split(';').map(s => s + ';');
+      
+      let curIndex = 0;
+      for (let stmt of statements) {
+        let nextIndex = curIndex + stmt.length;
+        if (start >= curIndex && start <= nextIndex) {
+           return stmt.trim();
+        }
+        curIndex = nextIndex;
+      }
+      
+      // Fallback to the current physical line if semi-colon split fails weirdly
+      const lines = fullText.split('\n');
+      let lengthAcc = 0;
+      for (let line of lines) {
+        if (start >= lengthAcc && start <= lengthAcc + line.length + 1) {
+          return line.trim();
+        }
+        lengthAcc += line.length + 1;
+      }
+    }
+  }
+  return sqlCode.value.trim();
+}
+
+const executeSql = async (mode = 'selected') => {
+  const targetSql = extractTargetSql(mode);
+  
+  if (!targetSql) return ElMessage.warning('未能获取有效的 SQL 语句')
 
   activeTab.value = 'result'
   const start = Date.now()
@@ -89,7 +144,7 @@ const executeSql = async () => {
   try {
     const res = await executeSqlApi({
       databaseName: currentDb.value,
-      sql: sqlCode.value
+      sql: targetSql
     })
     const cost = Date.now() - start
     const payload = res.data || {}
@@ -101,11 +156,11 @@ const executeSql = async () => {
       columns: payload.columns || []
     }
 
-    history.value.unshift({ time: timeStr, sql: sqlCode.value.split('\n')[0], cost, status: 'success' })
+    history.value.unshift({ time: timeStr, sql: targetSql.split('\n')[0], cost, status: 'success' })
   } catch (error) {
     const cost = Date.now() - start
     executionResult.value = { type: 'message', status: 'error', data: error.message || '执行失败', columns: [] }
-    history.value.unshift({ time: timeStr, sql: sqlCode.value.split('\n')[0], cost, status: 'error' })
+    history.value.unshift({ time: timeStr, sql: targetSql.split('\n')[0], cost, status: 'error' })
     activeTab.value = 'log'
   }
 }

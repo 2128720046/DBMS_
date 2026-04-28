@@ -64,11 +64,29 @@
       </el-aside>
 
       <el-main class="main-workspace">
-        <div class="router-wrapper">
-          <router-view v-slot="{ Component }">
-            <transition name="fade-slide" mode="out-in">
-              <component :is="Component" />
-            </transition>
+        <div class="tags-view-container" v-if="visitedViews.length > 0">
+          <el-tabs
+            v-model="activeTab"
+            type="card"
+            closable
+            @tab-click="onTabClick"
+            @tab-remove="onTabRemove"
+            class="custom-tabs"
+          >
+            <el-tab-pane
+              v-for="tab in visitedViews"
+              :key="tab.fullPath"
+              :label="tab.title"
+              :name="tab.fullPath"
+            />
+          </el-tabs>
+        </div>
+
+        <div class="router-wrapper" :class="{ 'has-tabs': visitedViews.length > 0 }">
+          <router-view v-slot="{ Component, route }">
+            <keep-alive>
+              <component :is="Component" :key="route.fullPath" />
+            </keep-alive>
           </router-view>
         </div>
         
@@ -89,7 +107,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, watch, computed, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { listDatabases, listTables } from '../api/dbms'
 import { ArrowDown, InfoFilled, Coin, Grid, Plus, Refresh, Document, Monitor } from '@element-plus/icons-vue'
@@ -102,6 +120,54 @@ const treeData = ref([])
 
 const defaultProps = { label: 'name', children: 'children' }
 const currentRouteTitle = computed(() => route.meta?.title || '控制台')
+
+// Tabs State for Keep-Alive and Multi-Page Document Support
+const visitedViews = ref([])
+const activeTab = ref('')
+
+watch(route, (newRoute) => {
+  if (newRoute.path === '/login') return
+
+  let title = newRoute.meta?.title || '主页'
+  if (newRoute.query.table) {
+    title = `表: ${newRoute.query.table}`
+  } else if (newRoute.query.db && newRoute.path === '/table') {
+    title = `库: ${newRoute.query.db}`
+  } else if (newRoute.path === '/sql') {
+    title = 'SQL控制台'
+  }
+
+  const exists = visitedViews.value.find(v => v.fullPath === newRoute.fullPath)
+  if (!exists && newRoute.path !== '/') {
+    visitedViews.value.push({
+      fullPath: newRoute.fullPath,
+      name: newRoute.name,
+      title
+    })
+  }
+  activeTab.value = newRoute.fullPath
+}, { immediate: true })
+
+const onTabClick = (tabPane) => {
+  router.push(tabPane.paneName)
+}
+
+const onTabRemove = (targetName) => {
+  const tabs = visitedViews.value
+  let current = activeTab.value
+  if (current === targetName) {
+    tabs.forEach((tab, index) => {
+      if (tab.fullPath === targetName) {
+        const nextTab = tabs[index + 1] || tabs[index - 1]
+        current = nextTab ? nextTab.fullPath : '/database'
+      }
+    })
+  }
+  
+  activeTab.value = current
+  visitedViews.value = tabs.filter(tab => tab.fullPath !== targetName)
+  router.push(current)
+}
 
 const handleLogout = () => {
   localStorage.removeItem('dbms-token')
@@ -255,10 +321,43 @@ onMounted(() => {
   background-color: var(--bg-color);
 }
 
+.tags-view-container {
+  height: 36px;
+  background: #fdfdfd;
+  border-bottom: 1px solid #ebecef;
+}
+
+.custom-tabs :deep(.el-tabs__header) {
+  margin: 0;
+  border-bottom: none;
+}
+
+.custom-tabs :deep(.el-tabs__nav) {
+  border: none !important;
+  border-top: none !important;
+  border-radius: 0 !important;
+}
+
+.custom-tabs :deep(.el-tabs__item) {
+  height: 36px;
+  line-height: 36px;
+  border-right: 1px solid #ebecef;
+  border-bottom: none;
+  font-size: 13px;
+}
+
+.custom-tabs :deep(.el-tabs__item.is-active) {
+  background-color: #fff;
+  border-bottom: 2px solid var(--el-color-primary);
+}
+
 .router-wrapper {
   flex: 1;
-  padding: 20px;
+  padding: 10px;
   overflow-y: auto;
+  overflow-x: hidden;
+  height: calc(100% - 66px); /* subtract tags view and status bar heights */
+  position: relative;
 }
 
 .status-bar {
