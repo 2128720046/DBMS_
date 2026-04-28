@@ -14,22 +14,36 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Service
 public class SqlApplicationService {
+
+    private static final Pattern CREATE_DATABASE_PATTERN = Pattern.compile(
+        "^\\s*CREATE\\s+DATABASE(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+([\"`]?)([A-Za-z][A-Za-z0-9_]{0,31})\\1\\s*;?\\s*$",
+        Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern DROP_DATABASE_PATTERN = Pattern.compile(
+        "^\\s*DROP\\s+DATABASE(?:\\s+IF\\s+EXISTS)?\\s+([\"`]?)([A-Za-z][A-Za-z0-9_]{0,31})\\1\\s*;?\\s*$",
+        Pattern.CASE_INSENSITIVE
+    );
 
     private static final Set<String> ALLOWED_PREFIX = Set.of(
             "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CALL"
     );
 
     private final DatabaseDomainService domainService;
+    private final DatabaseApplicationService databaseApplicationService;
     private final EngineCapabilityPolicy capabilityPolicy;
     private final DataSource dataSource;
 
     public SqlApplicationService(DatabaseDomainService domainService,
+                                 DatabaseApplicationService databaseApplicationService,
                                  EngineCapabilityPolicy capabilityPolicy,
                                  DataSource dataSource) {
         this.domainService = domainService;
+        this.databaseApplicationService = databaseApplicationService;
         this.capabilityPolicy = capabilityPolicy;
         this.dataSource = dataSource;
     }
@@ -38,12 +52,26 @@ public class SqlApplicationService {
         if (sql == null || sql.isBlank()) {
             throw new IllegalArgumentException("SQL 不能为空");
         }
+
+        Matcher createMatcher = CREATE_DATABASE_PATTERN.matcher(sql);
+        if (createMatcher.matches()) {
+            String dbName = domainService.normalizeDatabaseName(createMatcher.group(2));
+            databaseApplicationService.createDatabase(dbName);
+            return buildMessagePayload("数据库创建成功", 0);
+        }
+
+        Matcher dropMatcher = DROP_DATABASE_PATTERN.matcher(sql);
+        if (dropMatcher.matches()) {
+            String dbName = domainService.normalizeDatabaseName(dropMatcher.group(2));
+            databaseApplicationService.dropDatabase(dbName);
+            return buildMessagePayload("数据库删除成功", 0);
+        }
+
         capabilityPolicy.assertSqlAllowed(sql, ALLOWED_PREFIX);
 
         String normalizedDb = null;
         if (databaseName != null && !databaseName.isBlank()) {
-            domainService.validateDatabaseName(databaseName);
-            normalizedDb = databaseName;
+            normalizedDb = domainService.normalizeDatabaseName(databaseName);
         }
 
         try (Connection connection = dataSource.getConnection();

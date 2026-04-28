@@ -5,12 +5,8 @@
         <div class="card-header">
           <span>表管理 ({{ currentDb }})</span>
           <el-select v-model="currentDb" placeholder="请选择数据库" @change="fetchTables">
-            <el-option
-              v-for="db in databaseOptions"
-              :key="db"
-              :label="db"
-              :value="db"
-            />
+            <el-option label="db_test_1" value="db_test_1" />
+            <el-option label="db_online" value="db_online" />
           </el-select>
           <el-button class="button" type="primary" @click="dialogVisible = true">新建表</el-button>
           <el-button class="button" type="success" @click="fetchTables">刷新列表</el-button>
@@ -165,26 +161,21 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Check, Plus } from '@element-plus/icons-vue'
-import {
-  createTable,
-  dropTable,
-  getTableDetail,
-  listDatabases,
-  listTables
-} from '../api/dbms'
 
 const router = useRouter()
-const databaseOptions = ref([])
-const currentDb = ref('')
+const currentDb = ref('db_test_1')
 const drawer = ref(false)
 const dialogVisible = ref(false)
 const selectedTable = ref(null)
 
-const tableData = ref([])
+const tableData = ref([
+  { name: 'users', rows: 1200, engine: 'InnoDB', comment: '用户信息表' },
+  { name: 'orders', rows: 8500, engine: 'InnoDB', comment: '订单信息表' }
+])
 
 const form = ref({
     name: '',
@@ -192,55 +183,49 @@ const form = ref({
     columns: []
 })
 
-const fetchDatabases = async () => {
-  const res = await listDatabases()
-  databaseOptions.value = (res.data || []).map((item) => item.name)
-  if (!currentDb.value && databaseOptions.value.length > 0) {
-    currentDb.value = databaseOptions.value[0]
-  }
+const fetchTables = () => {
+   ElMessage.success(`刷新 ${currentDb.value} 的列表`)
 }
 
-const fetchTables = async () => {
-  if (!currentDb.value) {
-    tableData.value = []
-    return
-  }
-  const res = await listTables(currentDb.value)
-  tableData.value = (res.data || []).map((item) => ({
-    name: item.name,
-    rows: item.rows || '-',
-    engine: item.engine || 'H2',
-    comment: item.comment || '-'
-  }))
-}
-
-const viewStructure = async (row) => {
-  const res = await getTableDetail(currentDb.value, row.name)
-  selectedTable.value = {
-    name: row.name,
-    columns: res.data?.columns || [],
-    constraints: res.data?.constraints || [],
-    fks: res.data?.fks || [],
-    indexes: res.data?.indexes || [],
-    ddl: res.data?.ddl || ''
-  }
-  drawer.value = true
+const viewStructure = (row) => {
+    // Mock data based on DBeaver like structure
+    selectedTable.value = {
+        name: row.name,
+        columns: [
+            { name: 'id', type: 'INT', key: 'PRI', nn: true, default: '' },
+            { name: 'username', type: 'VARCHAR(50)', key: 'UNI', nn: true, default: '' },
+            { name: 'status', type: 'INT', key: '', nn: false, default: '1' }
+        ],
+        constraints: [
+            { name: 'PRIMARY', type: 'PRIMARY KEY', expr: '(`id`)' },
+            { name: 'uk_username', type: 'UNIQUE', expr: '(`username`)' },
+            { name: 'chk_status', type: 'CHECK', expr: '(`status` >= 0)' }
+        ],
+        fks: [
+             { name: 'fk_user_org', column: 'org_id', refTable: 'organization', refColumn: 'id' }
+        ],
+        indexes: [
+            { name: 'PRIMARY', column: 'id' },
+            { name: 'uk_username', column: 'username' }
+        ],
+        ddl: `CREATE TABLE \`${row.name}\` (\n  \`id\` INT NOT NULL AUTO_INCREMENT,\n  \`username\` VARCHAR(50) NOT NULL,\n  \`status\` INT DEFAULT 1,\n  PRIMARY KEY (\`id\`),\n  UNIQUE KEY \`uk_username\` (\`username\`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;`
+    }
+    drawer.value = true
 }
 
 const manageColumns = (row) => {
-  router.push({ path: '/column', query: { db: currentDb.value, table: row.name } })
+    router.push({ path: '/column', query: { db: currentDb.value, table: row.name } })
 }
 
 const handleDelete = (row) => {
-  ElMessageBox.confirm(`确定永久删除表 ${row.name} 吗？`, '警告', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
-    type: 'warning'
-  }).then(async () => {
-    await dropTable(currentDb.value, row.name)
-    await fetchTables()
-    ElMessage({ type: 'success', message: '删除成功' })
-  })
+    ElMessageBox.confirm(`确定永久删除表 ${row.name} 吗？`, '警告', {
+          confirmButtonText: '确定',
+          cancelButtonText: '取消',
+          type: 'warning',
+    }).then(() => {
+          tableData.value = tableData.value.filter(item => item.name !== row.name)
+          ElMessage({ type: 'success', message: '删除成功' })
+    })
 }
 
 const addColumn = () => {
@@ -261,39 +246,18 @@ const removeColumn = (index) => {
     form.value.columns.splice(index, 1)
 }
 
-const handleCreate = async () => {
-  if (!currentDb.value) return ElMessage.warning('请先选择数据库')
-  if (!form.value.name) return ElMessage.warning('表名不能为空')
-  if (form.value.columns.length === 0) return ElMessage.warning('请至少添加一个字段')
-
-  const payload = {
-    name: form.value.name,
-    comment: form.value.comment,
-    columns: form.value.columns.map((col) => ({
-      name: col.name,
-      type: col.type,
-      length: Number(col.length) || null,
-      nullable: !col.nn,
-      pk: !!col.pk,
-      uq: !!col.uq
-    }))
-  }
-
-  await createTable(currentDb.value, payload)
-  dialogVisible.value = false
-  form.value = { name: '', comment: '', columns: [] }
-  await fetchTables()
-  ElMessage.success('创建成功')
+const handleCreate = () => {
+    if(!form.value.name) return ElMessage.warning('表名不能为空')
+    tableData.value.push({
+        name: form.value.name,
+        rows: 0,
+        engine: 'InnoDB',
+        comment: form.value.comment
+    })
+    dialogVisible.value = false
+    ElMessage.success('创建成功')
+    form.value = { name: '', comment: '', columns: [] }
 }
-
-onMounted(async () => {
-  try {
-    await fetchDatabases()
-    await fetchTables()
-  } catch (error) {
-    ElMessage.error(error.message || '加载数据失败')
-  }
-})
 </script>
 
 <style scoped>

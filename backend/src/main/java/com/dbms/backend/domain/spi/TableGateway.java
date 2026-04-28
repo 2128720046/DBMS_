@@ -9,6 +9,8 @@ public interface TableGateway {
 
     void createTable(String schemaName, String tableName, List<ColumnDefinition> columns);
 
+    void alterTableStructure(String schemaName, String tableName, List<ColumnDefinition> columns);
+
     void dropTable(String schemaName, String tableName);
 
     List<String> listTables(String schemaName);

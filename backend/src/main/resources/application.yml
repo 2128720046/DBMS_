@@ -16,6 +16,8 @@ spring:
       enabled: false
 
 dbms:
+  storage:
+    root: .
   engine:
     capabilities:
       schema: true

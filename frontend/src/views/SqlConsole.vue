@@ -81,7 +81,6 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { executeSql as executeSqlApi } from '../api/dbms'
 
 const route = useRoute()
 const currentDb = ref('')
@@ -99,66 +98,56 @@ const history = ref([
 onMounted(() => {
    if(route.query.db) {
       currentDb.value = route.query.db
-      if (route.query.table) {
-        sqlCode.value = `SELECT * FROM ${route.query.db}.${route.query.table} LIMIT 50;\n`
-      }
+      sqlCode.value = `USE ${route.query.db};\n`
    }
 })
 
-const executeSql = async () => {
-  if (!sqlCode.value.trim()) return ElMessage.warning('请输入 SQL 语句')
-
-  activeTab.value = 'result'
-  const start = Date.now()
-  const startTimeStr = new Date(start).toLocaleString()
-
-  try {
-    const res = await executeSqlApi({
-      databaseName: currentDb.value,
-      sql: sqlCode.value
-    })
-    const end = Date.now()
-    const payload = res.data || {}
-
-    executionResult.value = {
-      type: payload.type || 'message',
-      data: payload.data || 'SQL 执行成功',
-      status: payload.status || 'success',
-      columns: payload.columns || []
-    }
-
+const executeSql = () => {
+    if(!sqlCode.value.trim()) return ElMessage.warning('请输入 SQL 语句')
+    
+    // Simulate execution based on statement type
+    activeTab.value = 'result'
+    const now = new Date()
+    const startTimeStr = now.toLocaleTimeString()
+    
     executionInfo.value = {
-      startTime: startTimeStr,
-      endTime: new Date(end).toLocaleString(),
-      cost: end - start,
-      affectedRows: Number(payload.affectedRows || 0),
-      status: 'success',
-      error: null
+        startTime: startTimeStr,
+        endTime: startTimeStr, // Mock fast
+        cost: Math.floor(Math.random() * 50) + 10,
+        status: 'success',
+        affectedRows: 0,
+        error: null
     }
 
+    if (sqlCode.value.toLowerCase().includes('select')) {
+        executionResult.value = {
+            type: 'table',
+            columns: [
+                { prop: 'id', label: 'ID' },
+                { prop: 'name', label: 'Name' },
+                { prop: 'age', label: 'Age' }
+            ],
+            data: [
+                { id: 1, name: 'Alice', age: 25 },
+                { id: 2, name: 'Bob', age: 30 }
+            ]
+        }
+        executionInfo.value.affectedRows = 2
+    } else {
+        executionResult.value = {
+            type: 'message',
+            status: 'success',
+            data: 'SQL 执行成功'
+        }
+        executionInfo.value.affectedRows = 1
+    }
+
+    // Add to history
     history.value.unshift({
-      time: startTimeStr,
-      sql: sqlCode.value.substring(0, 100) + (sqlCode.value.length > 100 ? '...' : ''),
-      cost: executionInfo.value.cost
+        time: startTimeStr,
+        sql: sqlCode.value.substring(0, 100) + (sqlCode.value.length > 100 ? '...' : ''),
+        cost: executionInfo.value.cost
     })
-  } catch (error) {
-    const end = Date.now()
-    executionResult.value = {
-      type: 'message',
-      status: 'error',
-      data: error.message || 'SQL 执行失败',
-      columns: []
-    }
-    executionInfo.value = {
-      startTime: startTimeStr,
-      endTime: new Date(end).toLocaleString(),
-      cost: end - start,
-      affectedRows: 0,
-      status: 'error',
-      error: error.message || 'SQL 执行失败'
-    }
-    activeTab.value = 'info'
-  }
 }
 
 const formatSql = () => {
