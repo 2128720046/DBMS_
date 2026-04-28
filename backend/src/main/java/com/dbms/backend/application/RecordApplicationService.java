@@ -19,31 +19,31 @@ public class RecordApplicationService {
     }
 
     public int insert(String databaseName, String tableName, Map<String, Object> values) {
-        domainService.validateDatabaseName(databaseName);
+        String normalizedDb = domainService.normalizeDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
-        return recordGateway.insert(databaseName, tableName, values);
+        return recordGateway.insert(normalizedDb, tableName, values);
     }
 
     public List<Map<String, Object>> query(String databaseName, String tableName,
                                            Map<String, Object> filters, Integer limit, Integer offset) {
-        domainService.validateDatabaseName(databaseName);
+        String normalizedDb = domainService.normalizeDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
 
         int safeLimit = limit == null ? 50 : Math.min(Math.max(limit, 1), 200);
         int safeOffset = offset == null ? 0 : Math.max(offset, 0);
-        return recordGateway.query(databaseName, tableName, filters, safeLimit, safeOffset);
+        return recordGateway.query(normalizedDb, tableName, filters, safeLimit, safeOffset);
     }
 
     public int update(String databaseName, String tableName,
                       Map<String, Object> filters, Map<String, Object> values) {
-        domainService.validateDatabaseName(databaseName);
+        String normalizedDb = domainService.normalizeDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
-        return recordGateway.update(databaseName, tableName, filters, values);
+        return recordGateway.update(normalizedDb, tableName, filters, values);
     }
 
     public int delete(String databaseName, String tableName, Map<String, Object> filters) {
-        domainService.validateDatabaseName(databaseName);
+        String normalizedDb = domainService.normalizeDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
-        return recordGateway.delete(databaseName, tableName, filters);
+        return recordGateway.delete(normalizedDb, tableName, filters);
     }
 }

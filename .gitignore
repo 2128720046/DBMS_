@@ -44,3 +44,9 @@ __pycache__/
 # 系统文件
 Thumbs.db
 .DS_Store
+backend/data/dbms.lock.db
+backend/data/dbms.mv.db
+backend/data/dbms.trace.db
+backend/ruanko.db
+backend/data/dbms.mv.db
+backend/data/dbms.trace.db

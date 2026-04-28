@@ -5,11 +5,13 @@
         <div class="card-header">
           <span>记录管理 ({{ currentDb }}.{{ currentTable }})</span>
           <div>
-                        <el-select v-model="currentDb" placeholder="数据库" style="width: 150px; margin-right: 10px" @change="resetTable">
-                            <el-option v-for="db in databaseOptions" :key="db" :label="db" :value="db" />
-                        </el-select>
-                        <el-select v-model="currentTable" placeholder="表" style="width: 150px; margin-right: 10px" @change="handleTableChange">
-                            <el-option v-for="table in tableOptions" :key="table" :label="table" :value="table" />
+            <el-select v-model="currentDb" placeholder="数据库" style="width: 150px; margin-right: 10px" @change="resetTable">
+              <el-option label="db_test_1" value="db_test_1" />
+              <el-option label="db_online" value="db_online" />
+            </el-select>
+            <el-select v-model="currentTable" placeholder="表" style="width: 150px; margin-right: 10px" @change="fetchRecords">
+              <el-option label="users" value="users" />
+              <el-option label="orders" value="orders" />
             </el-select>
             <el-button type="primary" @click="dialogVisible = true" :disabled="!currentTable">新增记录</el-button>
             <el-button type="success" @click="fetchRecords" :disabled="!currentTable">查询</el-button>
@@ -79,7 +81,7 @@
            </el-table>
            <div style="margin-top: 10px; display: flex; justify-content: space-between">
               <div>
-                  <el-button type="danger" :disabled="!selectedRows.length" plain @click="batchDelete">批量删除</el-button>
+                  <el-button type="danger" :disabled="!selectedRows.length" plain>批量删除</el-button>
                   <el-button type="info" :disabled="!selectedRows.length" plain>导出选中 (.csv)</el-button>
               </div>
               <el-pagination
@@ -114,24 +116,13 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Minus, Search } from '@element-plus/icons-vue'
-import {
-    deleteRecord,
-    getTableDetail,
-    insertRecord,
-    listDatabases,
-    listTables,
-    queryRecords,
-    updateRecord
-} from '../api/dbms'
 
 const router = useRouter()
-const databaseOptions = ref([])
-const tableOptions = ref([])
-const currentDb = ref('')
+const currentDb = ref('db_test_1')
 const currentTable = ref('')
 
 const queryForm = ref({
@@ -140,7 +131,11 @@ const queryForm = ref({
 })
 
 const columns = ref([
-    { prop: 'id', label: 'id' }
+    { prop: 'id', label: 'ID' },
+    { prop: 'username', label: '用户名' },
+    { prop: 'email', label: '邮箱' },
+    { prop: 'status', label: '状态' },
+    { prop: 'create_time', label: '创建时间' }
 ])
 
 const displayedColumns = computed(() => {
@@ -157,76 +152,18 @@ const editCache = ref({})
 const dialogVisible = ref(false)
 const newRecord = ref({})
 
-const resetTable = async () => {
-    currentTable.value = ''
-    tableOptions.value = []
-    columns.value = []
-    records.value = []
-    await fetchTables()
-}
+const resetTable = () => { currentTable.value = '' }
 
-const fetchDatabases = async () => {
-    const res = await listDatabases()
-    databaseOptions.value = (res.data || []).map((item) => item.name)
-    if (!currentDb.value && databaseOptions.value.length > 0) {
-        currentDb.value = databaseOptions.value[0]
-    }
-}
-
-const fetchTables = async () => {
-    if (!currentDb.value) {
-        tableOptions.value = []
-        return
-    }
-    const res = await listTables(currentDb.value)
-    tableOptions.value = (res.data || []).map((item) => item.name)
-}
-
-const loadTableColumns = async () => {
-    if (!currentDb.value || !currentTable.value) {
-        columns.value = []
-        return
-    }
-    const res = await getTableDetail(currentDb.value, currentTable.value)
-    const detailColumns = res.data?.columns || []
-    columns.value = detailColumns.map((col) => ({
-        prop: col.name,
-        label: col.name
+const fetchRecords = () => {
+    // Mock
+    records.value = Array.from({ length: Math.min(10, pagination.value.size) }).map((_, i) => ({
+        id: (pagination.value.page - 1) * pagination.value.size + i + 1,
+        username: `user_${i}`,
+        email: `user${i}@example.com`,
+        status: i % 2 === 0 ? 'active' : 'inactive',
+        create_time: new Date().toISOString()
     }))
-}
-
-const handleTableChange = async () => {
-    pagination.value.page = 1
-    await loadTableColumns()
-    await fetchRecords()
-}
-
-const fetchRecords = async () => {
-    if (!currentDb.value || !currentTable.value) {
-        records.value = []
-        return
-    }
-    const unsupported = queryForm.value.conditions.filter((c) => c.value && c.op !== '=')
-    if (unsupported.length > 0) {
-        ElMessage.warning('当前后端仅支持等值条件，已忽略非 = 条件')
-    }
-
-    const filters = {}
-    queryForm.value.conditions
-        .filter((c) => c.field && c.value !== '' && c.value !== null && c.op === '=')
-        .forEach((c) => {
-            filters[c.field] = c.value
-        })
-
-    const res = await queryRecords(currentDb.value, currentTable.value, {
-        page: pagination.value.page,
-        size: pagination.value.size,
-        filters
-    })
-
-    const data = res.data || {}
-    records.value = data.list || []
-    pagination.value.total = Number(data.total || 0)
+    ElMessage.success('查询完成')
 }
 
 const addCond = () => queryForm.value.conditions.push({ field: '', op: '=', value: '' })
@@ -240,69 +177,22 @@ const editRow = (index, row) => {
 }
 
 const saveRow = (index, row) => {
-    const keyColumn = columns.value[0]?.prop
-    if (!keyColumn || row[keyColumn] === undefined || row[keyColumn] === null) {
-        ElMessage.warning('缺少可用于更新的主键字段')
-        return
-    }
-    updateRecord(currentDb.value, currentTable.value, {
-        where: { [keyColumn]: row[keyColumn] },
-        updates: row
-    }).then(async () => {
-        editingRow.value = -1
-        await fetchRecords()
-        ElMessage.success('更新成功')
-    })
+    editingRow.value = -1
+    ElMessage.success(`记录 ${row.id} 已更新`)
 }
 
 const deleteRow = (index, row) => {
-    const keyColumn = columns.value[0]?.prop
-    if (!keyColumn || row[keyColumn] === undefined || row[keyColumn] === null) {
-        ElMessage.warning('缺少可用于删除的主键字段')
-        return
-    }
-    ElMessageBox.confirm('确定删除该记录吗？', '提示').then(async () => {
-        await deleteRecord(currentDb.value, currentTable.value, {
-            filters: { [keyColumn]: row[keyColumn] }
-        })
-        await fetchRecords()
+    ElMessageBox.confirm('确定删除该记录吗？', '提示').then(() => {
+        records.value.splice(index, 1)
         ElMessage.success('已删除')
     })
 }
 
-const handleInsert = async () => {
-    const values = { ...newRecord.value }
-    Object.keys(values).forEach((key) => {
-        if (values[key] === '' || values[key] === null || values[key] === undefined) {
-            delete values[key]
-        }
-    })
-    if (Object.keys(values).length === 0) {
-        ElMessage.warning('请至少填写一个字段值')
-        return
-    }
-    await insertRecord(currentDb.value, currentTable.value, { values })
+const handleInsert = () => {
+    records.value.unshift({ ...newRecord.value, id: Date.now() })
     dialogVisible.value = false
     newRecord.value = {}
-    await fetchRecords()
     ElMessage.success('已插入')
-}
-
-const batchDelete = async () => {
-    const keyColumn = columns.value[0]?.prop
-    if (!keyColumn) {
-        ElMessage.warning('当前表缺少可用于删除的标识字段')
-        return
-    }
-    for (const row of selectedRows.value) {
-        if (row[keyColumn] !== undefined && row[keyColumn] !== null) {
-            await deleteRecord(currentDb.value, currentTable.value, {
-                filters: { [keyColumn]: row[keyColumn] }
-            })
-        }
-    }
-    await fetchRecords()
-    ElMessage.success('批量删除完成')
 }
 
 const toSql = () => {
@@ -312,20 +202,12 @@ const toSql = () => {
     }
     sql += `\nLIMIT ${pagination.value.size};`
 
-        router.push({ path: '/sql', query: { db: currentDb.value, table: currentTable.value } })
+    router.push({ path: '/sql', query: { db: currentDb.value } })
     setTimeout(() => {
+        // use event bus or store in real app to pass sql
         ElMessage.warning('草稿 SQL 已复制到剪贴板(模拟): ' + sql)
     }, 500)
 }
-
-onMounted(async () => {
-    try {
-        await fetchDatabases()
-        await fetchTables()
-    } catch (error) {
-        ElMessage.error(error.message || '初始化记录页失败')
-    }
-})
 </script>
 
 <style scoped>

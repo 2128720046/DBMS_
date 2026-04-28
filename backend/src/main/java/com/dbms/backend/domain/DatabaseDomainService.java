@@ -2,6 +2,7 @@ package com.dbms.backend.domain;
 
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 @Service
@@ -13,6 +14,11 @@ public class DatabaseDomainService {
     public void validateDatabaseName(String dbName) {
         validateIdentifierByPattern(dbName, "数据库名", DB_NAME_PATTERN,
                 "数据库名不合法，仅支持字母开头，字母数字下划线，最长 32 位");
+    }
+
+    public String normalizeDatabaseName(String dbName) {
+        validateDatabaseName(dbName);
+        return dbName.toUpperCase(Locale.ROOT);
     }
 
     public void validateIdentifier(String identifier, String fieldName) {
