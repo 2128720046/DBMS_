@@ -149,6 +149,10 @@ const executeSql = async (mode = 'selected') => {
     const cost = Date.now() - start
     const payload = res.data || {}
 
+    if (payload.refreshTree) {
+      window.dispatchEvent(new Event('dbms-tree-refresh'))
+    }
+
     executionResult.value = {
       type: payload.type || 'message',
       data: payload.data || 'SQL 执行成功',
@@ -194,6 +198,12 @@ const clearEditor = () => { sqlCode.value = ''; executionResult.value = { type: 
   align-items: center;
   justify-content: space-between;
   padding: 0 16px;
+}
+
+.monaco-like-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .monaco-like-editor :deep(.el-textarea__inner) {

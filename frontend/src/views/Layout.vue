@@ -19,6 +19,7 @@
           <el-button icon="Grid" @click="$router.push('/table')">数据表</el-button>
           <el-button icon="Document" @click="$router.push('/record')">数据浏览</el-button>
           <el-button icon="Monitor" @click="$router.push('/sql')">SQL终端</el-button>
+          <el-button icon="DocumentCopy" @click="goBackupPage">备份恢复</el-button>
         </el-button-group>
       </div>
 
@@ -107,10 +108,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { listDatabases, listTables } from '../api/dbms'
-import { ArrowDown, InfoFilled, Coin, Grid, Plus, Refresh, Document, Monitor } from '@element-plus/icons-vue'
+import { ArrowDown, InfoFilled, Coin, Grid, Plus, Refresh, Document, Monitor, DocumentCopy } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -175,6 +176,11 @@ const handleLogout = () => {
   router.push('/login')
 }
 
+const goBackupPage = () => {
+  const query = route.query?.db ? { db: route.query.db } : {}
+  router.push({ path: '/backup', query })
+}
+
 const refreshTree = async () => {
   try {
     const res = await listDatabases()
@@ -199,6 +205,10 @@ const refreshTree = async () => {
   }
 }
 
+const handleTreeRefresh = () => {
+  refreshTree()
+}
+
 const filterNode = (value, data) => {
   if (!value) return true
   return data.name.includes(value)
@@ -218,6 +228,11 @@ const handleNodeClick = (data) => {
 
 onMounted(() => {
   refreshTree()
+  window.addEventListener('dbms-tree-refresh', handleTreeRefresh)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('dbms-tree-refresh', handleTreeRefresh)
 })
 </script>
 

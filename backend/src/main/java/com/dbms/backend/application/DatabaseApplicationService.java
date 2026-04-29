@@ -19,13 +19,13 @@ public class DatabaseApplicationService {
     }
 
     public void createDatabase(String dbName) {
-        domainService.validateDatabaseName(dbName);
-        schemaGateway.createSchema(dbName);
+        String normalizedDbName = domainService.normalizeDatabaseName(dbName);
+        schemaGateway.createSchema(normalizedDbName);
     }
 
     public void dropDatabase(String dbName) {
-        domainService.validateDatabaseName(dbName);
-        schemaGateway.dropSchema(dbName);
+        String normalizedDbName = domainService.normalizeDatabaseName(dbName);
+        schemaGateway.dropSchema(normalizedDbName);
     }
 
     public List<DatabaseInfo> listDatabases() {

@@ -2,6 +2,7 @@ package com.dbms.backend.domain;
 
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
 import java.util.regex.Pattern;
 
 @Service
@@ -15,6 +16,18 @@ public class DatabaseDomainService {
                 "数据库名不合法，仅支持字母开头，字母数字下划线，最长 32 位");
     }
 
+    // The storage layer treats identifiers in a canonical uppercase form.
+    public String normalizeDatabaseName(String dbName) {
+        validateDatabaseName(dbName);
+        return dbName.toUpperCase(Locale.ROOT);
+    }
+
+    // Table and column names follow the same uppercase convention as databases.
+    public String normalizeIdentifier(String identifier) {
+        validateIdentifier(identifier, "标识符");
+        return identifier.toUpperCase(Locale.ROOT);
+    }
+
     public void validateIdentifier(String identifier, String fieldName) {
         validateIdentifierByPattern(identifier, fieldName, IDENTIFIER_PATTERN,
                 fieldName + "不合法，仅支持字母开头，字母数字下划线，最长 64 位");
@@ -22,7 +35,7 @@ public class DatabaseDomainService {
 
     public String quoteIdentifier(String identifier, String fieldName) {
         validateIdentifier(identifier, fieldName);
-        return '"' + identifier + '"';
+        return '"' + identifier.toUpperCase(Locale.ROOT) + '"';
     }
 
     private void validateIdentifierByPattern(String name, String fieldName, Pattern pattern, String invalidMessage) {
@@ -33,8 +46,4 @@ public class DatabaseDomainService {
             throw new IllegalArgumentException(invalidMessage);
         }
     }
-    public String normalizeDatabaseName(String dbName) {
-    validateDatabaseName(dbName);
-    return dbName.toUpperCase();   // 统一转大写
-}
 }

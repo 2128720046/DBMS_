@@ -68,6 +68,7 @@ const handleCreate = async () => {
   dialogVisible.value = false
   form.value = { name: '' }
   await fetchDatabases()
+  window.dispatchEvent(new Event('dbms-tree-refresh'))
   ElMessage.success('创建成功')
 }
 
@@ -84,6 +85,7 @@ const handleDelete = (row) => {
     .then(async () => {
       await dropDatabase(row.name)
       await fetchDatabases()
+      window.dispatchEvent(new Event('dbms-tree-refresh'))
       ElMessage({ type: 'success', message: '删除成功' })
     })
     .catch(() => {

@@ -21,31 +21,34 @@ public class TableApplicationService {
     }
 
     public void createTable(String databaseName, String tableName, List<ColumnDefinition> columns) {
-        domainService.validateDatabaseName(databaseName);
-        domainService.validateIdentifier(tableName, "表名");
-        tableGateway.createTable(databaseName, tableName, columns);
+                // Normalize identifiers first so H2 metadata and later lookups use the same schema/table form.
+            String normalizedDb = domainService.normalizeDatabaseName(databaseName);
+            String normalizedTable = domainService.normalizeIdentifier(tableName);
+            tableGateway.createTable(normalizedDb, normalizedTable, columns);
     }
 
     public void updateTableStructure(String databaseName, String tableName, List<ColumnDefinition> columns) {
-        domainService.validateDatabaseName(databaseName);
-        domainService.validateIdentifier(tableName, "表名");
-        tableGateway.alterTableStructure(databaseName, tableName, columns);
+                // Structure changes must target the same canonical object names as the original create call.
+            String normalizedDb = domainService.normalizeDatabaseName(databaseName);
+            String normalizedTable = domainService.normalizeIdentifier(tableName);
+            tableGateway.alterTableStructure(normalizedDb, normalizedTable, columns);
     }
 
     public void dropTable(String databaseName, String tableName) {
-        domainService.validateDatabaseName(databaseName);
-        domainService.validateIdentifier(tableName, "表名");
-        tableGateway.dropTable(databaseName, tableName);
+                // Drop the canonical identifier so case mismatches do not leave orphan metadata behind.
+            String normalizedDb = domainService.normalizeDatabaseName(databaseName);
+            String normalizedTable = domainService.normalizeIdentifier(tableName);
+            tableGateway.dropTable(normalizedDb, normalizedTable);
     }
 
     public List<TableInfo> listTables(String databaseName) {
-        domainService.validateDatabaseName(databaseName);
-        return tableGateway.listTables(databaseName).stream().map(TableInfo::new).toList();
+            String normalizedDb = domainService.normalizeDatabaseName(databaseName);
+            return tableGateway.listTables(normalizedDb).stream().map(TableInfo::new).toList();
     }
 
     public Map<String, Object> getTableDetail(String databaseName, String tableName) {
-        domainService.validateDatabaseName(databaseName);
-        domainService.validateIdentifier(tableName, "表名");
-        return tableGateway.getTableDetail(databaseName, tableName);
+            String normalizedDb = domainService.normalizeDatabaseName(databaseName);
+            String normalizedTable = domainService.normalizeIdentifier(tableName);
+            return tableGateway.getTableDetail(normalizedDb, normalizedTable);
     }
 }
