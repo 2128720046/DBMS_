@@ -93,11 +93,11 @@ public class JdbcTableGateway implements TableGateway {
     @Override
     public List<String> listTables(String schemaName) {
         capabilityPolicy.assertTableEnabled();
-        return jdbcTemplate.queryForList(
-                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
-                String.class,
-                schemaName.toUpperCase()
-        );
+       String normalized = domainService.normalizeDatabaseName(schemaName);
+    return jdbcTemplate.queryForList(
+        "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME",
+        String.class, normalized   // 注意：不再需要 toUpperCase()，因为已经标准化为大写
+    );
     }
 
     @Override
@@ -235,8 +235,9 @@ public class JdbcTableGateway implements TableGateway {
     }
 
     private String qualifiedTable(String schemaName, String tableName) {
-        return domainService.quoteIdentifier(schemaName, "数据库名") + "."
-                + domainService.quoteIdentifier(tableName, "表名");
+         String normalized = domainService.normalizeDatabaseName(schemaName);
+    return domainService.quoteIdentifier(normalized, "数据库名") + "."
+            + domainService.quoteIdentifier(tableName, "表名");
     }
 
     private String quotedIdentifier(String identifier) {

@@ -84,13 +84,14 @@ private String translateMySqlToH2(String sql) {
         try (Connection connection = dataSource.getConnection();
              Statement statement = connection.createStatement()) {
             if (normalizedDb != null) {
-                statement.execute("SET SCHEMA " + domainService.quoteIdentifier(normalizedDb, "数据库名"));
+                String standardized = domainService.normalizeDatabaseName(normalizedDb);
+                statement.execute("SET SCHEMA " + domainService.quoteIdentifier(standardized, "数据库名"));
             }
 
             boolean hasResultSet = statement.execute(sql);
             if (!hasResultSet) {
                 int affectedRows = Math.max(statement.getUpdateCount(), 0);
-                return buildMessagePayload("SQL 执行成功", affectedRows);
+                return buildMessagePayload("SQL 执行成功", affectedRows, sql);
             }
 
             try (ResultSet rs = statement.getResultSet()) {
@@ -101,12 +102,21 @@ private String translateMySqlToH2(String sql) {
         }
     }
 
-    private Map<String, Object> buildMessagePayload(String message, int affectedRows) {
+    private Map<String, Object> buildMessagePayload(String message, int affectedRows, String sql) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "message");
         payload.put("status", "success");
         payload.put("data", message);
         payload.put("affectedRows", affectedRows);
+        
+        String upper = sql.trim().toUpperCase();
+        if (upper.startsWith("CREATE DATABASE") || upper.startsWith("DROP DATABASE") || 
+            upper.startsWith("CREATE TABLE") || upper.startsWith("DROP TABLE")) {
+             payload.put("refreshTree", true);
+        } else {
+             payload.put("refreshTree", false);
+        }
+        
         return payload;
     }
 
