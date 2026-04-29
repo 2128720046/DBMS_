@@ -716,3 +716,12 @@ Age int check(Age>=18)); [42122-224]
 2026-04-29 11:02:04.873523+08:00 jdbc[3]: exception
 org.h2.jdbc.JdbcSQLDataException: Value too long for column "SEX CHARACTER VARYING(2)": "'male' (4)"; SQL statement:
 insert into student values('1','a','male',19) [22001-224]
+2026-04-29 12:01:08.551271+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: (Message 42S01 not found); SQL statement:
+create table school(classno varchar(100),classname varchar(100)) [42101-249]
+2026-04-29 12:01:56.979977+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: (Message 42S01 not found); SQL statement:
+create table school(classno varchar(100),classname varchar(100)) [42101-249]
+2026-04-29 12:25:36.329725+08:00 jdbc[3]: exception
+org.h2.jdbc.JdbcSQLSyntaxErrorException: (Message 42S02 not found); SQL statement:
+select * from student; [42102-249]
