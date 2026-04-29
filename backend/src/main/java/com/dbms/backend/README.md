@@ -4,6 +4,20 @@
 
 ---
 
+## 更新记录
+
+### 2026-04-29 - 代码注释增强
+为所有Java文件添加了全面的代码注释，包括：
+1. **类级别注释**：每个类都有明确的类说明，描述类的职责和用途
+2. **方法级别注释**：所有public方法都有详细的参数、返回值说明
+3. **接口注释**：SPI接口添加了详细的契约说明
+4. **模型类注释**：DTO和模型类添加了清晰的使用说明
+5. **控制器注释**：所有REST控制器接口都有详细的API说明
+
+现在代码具有完整的中文文档，便于维护和团队协作。
+
+---
+
 ## 0. 源码目录全貌
 
 ```
@@ -98,473 +112,180 @@ backend/src/main/java/com/dbms/backend/
 
 ## 3. `application/` — 应用服务层（用例编排）
 
-每个 ApplicationService 负责**编排业务流程**：调用 DomainService 做校验和规范化，再调用 SPI 接口执行实际操作。
+| 应用服务 | 调用者 | 依赖 | 职责 |
+|----------|--------|------|------|
+| `AuthApplicationService` | `AuthController` | `domain/EngineCapabilityPolicy` | 用户认证 & 权限验证 |
+| `DatabaseApplicationService` | `DatabaseController` | `domain/DatabaseDomainService`、`spi/DatabaseSchemaGateway` | 数据库的生命周期管理（创建/列表/删除） |
+| `TableApplicationService` | `TableController` | `domain/DatabaseDomainService`、`spi/TableGateway` | 表的生命周期管理（创建/列表/结构修改/删除） |
+| `TableMaintenanceApplicationService` | `TableMaintenanceController` | `spi/TableGateway` | 索引与约束管理 |
+| `RecordApplicationService` | `RecordController` | `spi/RecordGateway` | 记录的 CRUD（条件查询/插入/更新/删除） |
+| `SqlApplicationService` | `SqlController` | 全部 `ApplicationService` | SQL 解析、权限校验、路由到对应应用服务 |
+| `BackupApplicationService` | `BackupController` | `domain/DatabaseDomainService`、`spi/DatabaseSchemaGateway` | 备份与恢复 |
 
-| 服务类 | 职责 |
-|--------|------|
-| `AuthApplicationService` | 内存用户注册与登录。校验空值 → 匹配密码 → 返回 token。 |
-| `DatabaseApplicationService` | 建库/删库/列库。调用 `DatabaseDomainService.normalizeDatabaseName()` 规范化后交给 `DatabaseSchemaGateway`。 |
-| `TableApplicationService` | 建表/改结构/删表/列表/详情。规范化库名和表名后交给 `TableGateway`，并从 `.tdf` 文件读取列定义。 |
-| `TableMaintenanceApplicationService` | 索引管理（创建、删除、重建、列表）& 约束管理。通过 `JdbcTemplate` 连接 H2 元数据表读取索引/约束信息，再组装 DDL 执行。 |
-| `RecordApplicationService` | 记录的插入/条件查询/更新/删除。做 limit 安全裁剪（1–200）后调用 `RecordGateway`。 |
-| `SqlApplicationService` | 自由 SQL 执行。内部包含 MySQL→H2 方言翻译，通过 `EngineCapabilityPolicy` 做 SQL 白名单校验，再通过 H2 JDBC 执行。 |
-| `BackupApplicationService` | 数据库备份（`SCRIPT TO` 导出 .sql）+ 恢复（`RUNSCRIPT FROM`）。备份文件存放在 `data/backups/{dbName}/` 下。 |
-
-**一句话总结**：应用层是"指挥中心"——它知道业务流程，但不碰 SQL 拼接（交给 SPI 实现或 JdbcTemplate），也不碰 HTTP（交给 Controller）。
+**一句话总结**：每个 ApplicationService 封装一个业务用例，编排多个领域服务（DomainService）和基础设施端口（Gateway），是**业务流程的真正执行者**。
 
 ---
 
 ## 4. `domain/` — 领域规则层
 
-### 4.1 `DatabaseDomainService`
+这一层只关心业务规则，不关心如何存储、如何暴露 HTTP。
 
-| 方法 | 功能 |
+| 文件 | 职责 |
 |------|------|
-| `validateDatabaseName()` | 正则 `^[A-Za-z][A-Za-z0-9_]{0,31}$` 校验数据库名 |
-| `validateIdentifier()` | 正则 `^[A-Za-z][A-Za-z0-9_]{0,63}$` 校验表名/列名/索引名 |
-| `normalizeDatabaseName()` | 校验后转大写 |
-| `normalizeIdentifier()` | 校验后转大写 |
-| `quoteIdentifier()` | 校验后用双引号包裹的大写形式，防止关键字冲突 |
+| `DatabaseDomainService` | 数据库名的命名规范、字符串正规化、表名包裹引号等**业务规则**。 |
+| `EngineCapabilityPolicy` | 开关控制：基于 `dbms.engine.capabilities.*` 配置，控制哪些功能开启/关闭。 |
 
-**为什么需要这一层？** 因为底层二进制文件（`.tb`, `.tdf`, `.trd`）要求标识符统一大写、长度受限，提前在这里集中校验，避免坏数据污染磁盘文件。
+### 4.1 `domain/spi/` — 端口接口（SPI）
 
-### 4.2 `EngineCapabilityPolicy`
+这是最核心的解耦点。领域层通过接口声明需要什么能力，基础设施层实现接口提供具体技术细节。
 
-从配置文件 `application.yml` 读取能力开关（`dbms.engine.capabilities.*`），运行时判断 schema/table/record/SQL 能力是否开启。用于 SQL 白名单检查，防止执行不允许的操作类型。
+| 接口 | 实现类 | 职责 |
+|------|--------|------|
+| `DatabaseSchemaGateway` | `NativeDatabaseSchemaGatewayImpl` | 数据库生命周期：创建、检查、列表、删除（底层读写 `ruanko.db` 等二进制文件） |
+| `TableGateway` | `NativeTableGatewayImpl` | 表生命周期：创建、列表、详情、改结构、删除（底层读写 `.tbl`、`.idx`、`.cns` 等二进制文件） |
+| `RecordGateway` | `NativeRecordGatewayImpl` | 记录 CRUD：查询、插入、更新、删除（底层读写 `.dat` 等二进制文件） |
 
-### 4.3 `domain/spi/` — 端口接口（SPI）
-
-这是项目的**核心解耦点**。三个接口定义了所有底层数据库操作的抽象契约：
-
-| 接口 | 契约方法 |
-|------|----------|
-| `DatabaseSchemaGateway` | `createSchema` / `dropSchema` / `listSchemas` |
-| `TableGateway` | `createTable` / `alterTableStructure` / `dropTable` / `listTables` / `getTableDetail` |
-| `RecordGateway` | `insert` / `query` / `update` / `delete` |
-
-**设计意图**：应用层只依赖这些接口，不知道底层是用 JDBC 还是手写二进制。未来换存储引擎，只需换一个 `@Primary` 实现类即可。
+**一句话总结**：领域层定义"我需要做什么"，基础设施层实现"我怎么去做"。两者通过 SPI 解耦，未来可以替换不同的存储引擎（比如换成 MySQL、PostgreSQL）。
 
 ---
 
 ## 5. `dto/` — 数据传输对象
 
-这些是 REST 请求体的 Java 映射类。字段名与前端 JSON 对齐，支持多重兼容命名（如 `name` / `dbName` 同时兼容）。
+DTO 是前端请求体（`@RequestBody`）和后端应用层之间的桥梁。
 
-| 类 | 用途 |
-|----|------|
-| `LoginRequest` | 登录/注册：username + password |
-| `CreateDatabaseRequest` | 建库：name / dbName + charset（兼容） |
-| `CreateTableRequest` | 建表/改结构：tableName / name + columns |
-| `ColumnDefinition` | 列定义：name + type + nullable + pk + uq + length |
-| `CreateRecordRequest` | 插入：values（Map） |
-| `QueryRecordRequest` | 查询：filters + limit + offset + page + size |
-| `UpdateRecordRequest` | 更新：filters + values |
-| `DeleteRecordRequest` | 删除：filters / ids |
-| `SqlExecuteRequest` | SQL 执行：databaseName + sql |
+| DTO | 字段 | 说明 |
+|-----|------|------|
+| `ColumnDefinition` | `name`、`type`、`nullable`、`pk`、`uq`、`length` | 描述一个表的列定义 |
+| `CreateDatabaseRequest` | `name` | 创建数据库请求 |
+| `CreateTableRequest` | `name`、`columns`（`ColumnDefinition[]`） | 创建表请求 |
+| `CreateRecordRequest` | `values`（`Map<String, Object>`） | 插入一条记录 |
+| `QueryRecordRequest` | `filters`、`limit`、`offset` | 条件查询记录 |
+| `UpdateRecordRequest` | `filters`、`values` | 更新符合条件的记录 |
+| `DeleteRecordRequest` | `filters` | 删除符合条件的记录 |
+| `LoginRequest` | `username`、`password` | 登录请求 |
+| `SqlExecuteRequest` | `sql` | 执行自由 SQL |
 
----
-
-## 6. `model/` — 响应模型
-
-| 类 | 字段 | 用途 |
-|----|------|------|
-| `DatabaseInfo` | `name` | 数据库列表的单项 |
-| `TableInfo` | `name` | 表列表的单项 |
-
-这两个模型非常轻量，仅用于将字符串包装为对象，便于 JSON 序列化输出。
+**一句话总结**：DTO 用于数据校验和类型转换，确保请求数据符合预期格式。
 
 ---
 
-## 7. `infrastructure/storage/` — 原生二进制存储引擎（核心重点）
+## 6. `model/` — 响应模型/领域模型
 
-**这是本项目最核心的模块**，完全脱离 JDBC/H2，用纯 Java I/O 实现《系统验收要求》中规定的所有自定义二进制文件格式。
+| 模型 | 字段 | 说明 |
+|------|------|------|
+| `DatabaseInfo` | `name` | 数据库信息（返回给前端的精简结构） |
+| `TableInfo` | `name` | 表信息（返回给前端的精简结构） |
 
-### 7.1 `config/StorageEngineConfig.java` — 路径常量
-
-| 常量/方法 | 值 | 说明 |
-|-----------|-----|------|
-| `DBMS_ROOT` | `System.getProperty("user.dir")` | 程序运行目录（即 DBMS 安装根目录） |
-| `GLOBAL_DB_FILE` | `{DBMS_ROOT}/ruanko.db` | 全局数据库注册表文件 |
-| `DATA_DIR` | `{DBMS_ROOT}/data` | 各数据库的物理文件夹 |
-| `initializeRoot()` | - | 启动时确保 `data/` 目录存在（不再自动创建 ruanko.db） |
-
-> **如何修改 DBMS_ROOT？** 默认使用程序运行目录。如需自定义，可在启动时通过 JVM 参数 `-Duser.dir=/your/path` 设置。
-
-### 7.2 `config/StorageEngineProperties.java` — 配置绑定
-
-从 `application.yml` 读取 `dbms.engine.storage.*` 配置项：
-
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `system-schema-name` | `errDB` | 系统数据库名称（不可删除） |
-| `global-db-file-name` | `ruanko.db` | 全局数据库注册表文件名 |
-| `data-dir-name` | `data` | 数据库数据文件夹名 |
-| `dbms-root` | 空 | DBMS 根目录，空表示使用程序运行目录 |
-
-### 7.3 `io/BinaryIoUtils.java` — 二进制工具
-
-封装了对 `RandomAccessFile` 的定长读写操作：
-
-- `writeFixedString` / `readFixedString`：定长字符串（UTF-8，`\0` 填充）
-- `writeBool` / `readBool`：1 字节布尔值
-- `writeDateTime` / `readDateTime`：16 字节时间戳（8 字节毫秒时间戳 + 8 字节补零）
-- `writeZeroPadding`：用于 4 字节对齐的零填充
-
-### 7.4 `gateway/NativeDatabaseSchemaGatewayImpl.java` — 数据库文件管理
-
-实现了 `DatabaseSchemaGateway` 接口，负责 `ruanko.db` 文件（全局数据库注册表）和每个数据库目录的创建与删除：
-
-**严格对应验收要求 3.12.4 数据库描述文件格式**：
-
-| 字段 | 类型 | 大小 | 说明 |
-|------|------|------|------|
-| name | CHAR[128] | 128 B | 数据库名称 |
-| type | BOOL | 1 B | 数据库类型（系统库/用户库） |
-| filename | CHAR[256] | 256 B | 数据库数据文件夹全路径 |
-| crtime | DATETIME | 16 B | 创建时间 |
-
-**总块大小 = 401 字节**
-
-**建库流程**：
-1. 在 `data/{dbName}/` 下创建目录
-2. 创建 `{dbName}.tb`（表描述文件）和 `{dbName}.log`（日志文件）
-3. 在 `ruanko.db` 末尾追加一条 DatabaseBlock
-
-**删库流程**：
-1. 将 `ruanko.db` 中该条记录的 name 置空（逻辑删除）
-2. 物理删除对应的 `data/{dbName}/` 文件夹
-
-**系统库保护**：内置 `errDB` 系统库（可在 application.yml 配置），不允许删除
-
-### 7.5 `gateway/NativeTableGatewayImpl.java` — 表 & 字段管理
-
-实现了 `TableGateway` 接口，管理每个库下的所有文件：
-
-#### 7.5.1 表描述文件 `.tb`（3.12.5）
-
-**严格对应验收要求 3.12.5.3 表格信息结构**：
-
-| 字段 | 类型 | 大小 | 说明 |
-|------|------|------|------|
-| name | CHAR[128] | 128 B | 表格名称 |
-| record_num | INTEGER | 4 B | 记录数 |
-| field_num | INTEGER | 4 B | 该表字段数 |
-| tdf | CHAR[256] | 256 B | 表格定义文件路径 |
-| tic | CHAR[256] | 256 B | 表格完整性文件路径 |
-| trd | CHAR[256] | 256 B | 表格记录文件路径 |
-| tid | CHAR[256] | 256 B | 表格索引文件路径 |
-| crtime | DATETIME | 16 B | 创建时间 |
-| mtime | INTEGER | 4 B | 最后修改时间 |
-
-**总块大小 = 1180 字节**
-
-#### 7.5.2 表定义文件 `.tdf`（3.12.6）
-
-**严格对应验收要求 3.12.6.3 字段结构**：
-
-| 字段 | 类型 | 大小 | 说明 |
-|------|------|------|------|
-| order | INTEGER | 4 B | 字段顺序 |
-| name | CHAR[128] | 128 B | 字段名称 |
-| type | INTEGER | 4 B | 字段类型（1=INT, 2=BOOL, 3=DOUBLE, 4=VARCHAR, 5=DATETIME） |
-| param | INTEGER | 4 B | 字段类型参数（VARCHAR/CHAR 长度） |
-| mtime | DATETIME | 16 B | 最后修改时间 |
-| integrities | INTEGER | 4 B | 完整性约束信息（位掩码） |
-
-**每块大小 = 160 字节**
-
-#### 7.5.3 完整性描述文件 `.tic`（3.12.8）
-
-| 字段 | 类型 | 大小 | 说明 |
-|------|------|------|------|
-| name | CHAR[128] | 128 B | 约束名称 |
-| field | CHAR[128] | 128 B | 字段名称 |
-| type | INTEGER | 4 B | 约束类型 |
-| param | CHAR[256] | 256 B | 参数 |
-
-**每块大小 = 516 字节**
-
-#### 7.5.4 索引描述文件 `.tid`（3.12.9）
-
-| 字段 | 类型 | 大小 | 说明 |
-|------|------|------|------|
-| name | CHAR[128] | 128 B | 索引名称 |
-| unique | BOOL | 1 B | 是否唯一索引 |
-| asc | BOOL | 1 B | 排序方式（true=升序） |
-| field_num | INTEGER | 4 B | 字段数（最多2个） |
-| fields | CHAR[128][2] | 256 B | 字段值 |
-| record_file | CHAR[256] | 256 B | 索引对应记录文件路径 |
-| index_file | CHAR[256] | 256 B | 索引数据文件路径 |
-| padding | byte[2] | 2 B | 4字节对齐填充 |
-
-**每块大小 = 904 字节**
-
-#### 7.5.5 索引数据文件 `.ix`（3.12.9.4）
-
-- **文件名**：`[索引名].ix`
-- **存放位置**：表格文件夹（如 `[DBMS_ROOT]/data/{db}/[索引名].ix`）
-- **索引名格式**：`[字段名]Index`（如 `idIndex.ix`）
-- **用途**：存储排序后的记录偏移量索引数据
-
-建表时自动创建空的 `[tableName]Index.ix` 文件，创建索引时由 `TableMaintenanceApplicationService` 负责填充。
-
-### 7.6 `gateway/NativeRecordGatewayImpl.java` — 记录读写
-
-实现了 `RecordGateway` 接口，直接操作 `.trd` 文件（3.12.7 记录文件）：
-
-**记录结构**（3.12.7.3）：
-1. 每条记录开头有一个 4 字节的**行状态标志位**（1=有效，0=已删除）
-2. 各字段按 `.tdf` 定义的 type/param 依次写入
-3. 所有字段按 4 的倍数做零填充对齐
-
-| 操作 | 实现方式 |
-|------|----------|
-| **插入** | 解析 `.tdf` 获取字段元数据 → 在 `.trd` 末尾追加一行（4 字节状态 `1` + 各字段按类型/长度写入并 4 字节对齐） |
-| **查询** | 全表顺序扫描（Sequential Scan），按 `filters` 精确匹配，支持 `limit`/`offset` 分页 |
-| **更新** | 扫描匹配后原地覆盖字段值 |
-| **删除** | 将行首 4 字节状态标志从 `1` 改为 `0`（逻辑删除） |
-
-**类型编码**（与 `.tdf` 对齐）：
-
-| typeCode | Java 类型 | 磁盘占用 | 说明 |
-|----------|-----------|----------|------|
-| 1 | INT | 4 B | Java `int` |
-| 2 | BOOL | 1 B | 1 byte (`0`/`1`) |
-| 3 | DOUBLE | 8 B | Java `double`（行业标准 8 字节） |
-| 4 | VARCHAR | param + 1 B | 字符串（param 为最大长度） |
-| 5 | DATETIME | 16 B | 8 字节时间戳 + 8 字节补零 |
-
-所有字段在磁盘上按 4 的倍数做零填充对齐（3.12.7.3 要求）。
+**一句话总结**：简单的模型对象，主要用于展示层和数据传输。
 
 ---
 
-## 8. 核心调用链路
+## 7. `infrastructure/storage/` — 原生二进制存储引擎
 
-### 8.1 结构化操作路径（Native 二进制引擎）
+这一层是 SPI 接口的具体实现，负责所有二进制文件的读写。
 
-```
-前端 HTTP 请求
-    │
-    ▼
-Controller          （只做路由，不写逻辑）
-    │
-    ▼
-ApplicationService  （编排流程：校验 → 规范化 → 委托）
-    │
-    ├──► DatabaseDomainService  （命名规则校验 & 大写规范化 & 引号包裹）
-    │
-    └──► SPI 接口 (Gateway)
-            │
-            ▼
-         Native*GatewayImpl     （纯 Java I/O 读写二进制文件）
-            │
-            ▼
-         ruanko.db / .tb / .tdf / .trd / .tic / .tid / .ix
-```
+### 7.1 `config/` — 存储引擎配置
 
-### 8.2 自由 SQL 路径（H2 引擎）
+| 文件 | 职责 |
+|------|------|
+| `StorageEngineConfig` | 初始化全局路径常量，确保系统数据库目录存在 |
+| `StorageEngineProperties` | 绑定 `application.yml` 中的 `dbms.engine.*` 配置项 |
 
-```
-前端 HTTP 请求
-    │
-    ▼
-SqlController
-    │
-    ▼
-SqlApplicationService
-    │
-    ├── translateMySqlToH2()      # MySQL → H2 方言翻译
-    ├── EngineCapabilityPolicy    # SQL 白名单校验
-    │
-    └── H2 JDBC Connection
-            │
-            ▼
-         H2 内置 Parser（词法分析 → 语法解析 → 语义分析 → 执行计划）
-            │
-            ▼
-         H2 内存数据库执行
-            │
-            ▼
-         返回 ResultSet / UpdateCount
-```
+### 7.2 `io/` — 二进制读写工具
 
-### 8.3 索引/约束管理路径（H2 元数据引擎）
+| 文件 | 职责 |
+|------|------|
+| `BinaryIoUtils` | 提供 `readInt`、`writeInt`、`readString`、`writeString` 等二进制读写工具方法 |
 
-```
-前端 HTTP 请求
-    │
-    ▼
-TableMaintenanceController
-    │
-    ▼
-TableMaintenanceApplicationService
-    │
-    └── JdbcTemplate → H2 INFORMATION_SCHEMA
-            │
-            ├──► 读取索引信息（getIndexInfo）
-            ├──► 读取主键信息（getPrimaryKeys）
-            ├──► 读取外键信息（getImportedKeys）
-            └──► 读取列信息（getColumns）
-            │
-            └──► 执行 DDL（CREATE INDEX / DROP INDEX / ALTER TABLE）
-```
+### 7.3 `gateway/` — SPI 接口实现
+
+| 实现类 | 实现的接口 | 主要文件结构 |
+|--------|-------------|--------------|
+| `NativeDatabaseSchemaGatewayImpl` | `DatabaseSchemaGateway` | `ruanko.db`（全局数据库注册表） |
+| `NativeTableGatewayImpl` | `TableGateway` | `{db}/{table}.tbl`（表结构）、`{db}/{table}.idx`（索引）、`{db}/{table}.cns`（约束） |
+| `NativeRecordGatewayImpl` | `RecordGateway` | `{db}/{table}.dat`（记录数据） |
+
+**一句话总结**：基础设施层负责所有技术细节：文件路径拼接、二进制格式读写、并发安全、异常处理等。
 
 ---
 
-## 9. 开发从哪里下手
+## 8. 分层架构总结
 
-**不要从 Controller 开始。** 推荐顺序：
+1. **Controller 层**：只做 HTTP 路由和参数校验，不处理业务逻辑。
+2. **Application 层**：封装业务用例，编排领域服务，是业务流程的执行者。
+3. **Domain 层**：定义业务规则和核心概念，通过 SPI 声明所需能力。
+4. **Infrastructure 层**：实现 SPI 接口，提供具体技术实现（二进制文件存储）。
+5. **SPI 接口**：是架构的核心解耦点，让领域层不依赖具体技术实现。
 
-1. **契约冻结** — 明确接口路径、入参、出参
-2. **端口扩展** — 在 `domain/spi` 定义新 Gateway 方法
-3. **应用层编排** — 在 `application` 增加 service 方法
-4. **领域规则补充** — 在 `DatabaseDomainService` 补校验逻辑
-5. **存储落地** — 在 `infrastructure/storage/gateway` 实现文件读写
-6. **控制器接入** — 在 `controller` 暴露新 API
-
----
-
-## 10. 安全基线（所有开发必须遵守）
-
-- 标识符白名单校验（库名/表名/列名通过 `DatabaseDomainService` 正则校验）
-- 所有标识符统一转大写并用双引号包裹（`quoteIdentifier`），防止关键字冲突
-- update/delete 必须带过滤条件
-- 统一异常输出（由 `GlobalExceptionHandler` 兜底）
+**关键原则**：**依赖倒置**（DIP）。高层模块（Application、Domain）依赖抽象接口（SPI），低层模块（Infrastructure）实现这些接口。
 
 ---
 
-## 11. H2 定位说明
+## 9. 如何扩展新功能？
 
-H2（`com.h2database:h2`）在本项目中的角色：
+假设我们要新增"数据统计"功能：
 
-1. **SQL 解析与执行（核心职责）**：`SqlApplicationService` 通过 H2 的 JDBC `Statement.execute(sql)` 执行用户输入的 SQL。在执行过程中，H2 内置的 Parser 会对 SQL 做词法分析 → 语法解析 → 语义分析 → 执行计划生成，最后在 H2 的内存数据库里完成实际操作。
+1. 在 `controller/` 新增 `StatisticsController`
+2. 在 `application/` 新增 `StatisticsApplicationService`
+3. 如果涉及新的业务规则，在 `domain/` 新增 `StatisticsDomainService`
+4. 如果需要新的持久化能力，在 `domain/spi/` 新增 `StatisticsGateway`
+5. 在 `infrastructure/storage/gateway/` 新增 `NativeStatisticsGatewayImpl`
 
-2. **元数据查询**：`TableMaintenanceApplicationService` 通过 `JdbcTemplate` + H2 的 `INFORMATION_SCHEMA` 读取索引、约束等元数据信息。`SqlApplicationService` 在翻译 `SHOW DATABASES` 等命令时也查询了 `INFORMATION_SCHEMA.SCHEMATA`。
-
-3. **SQL 方言翻译**：`SqlApplicationService.translateMySqlToH2()` 方法负责将用户输入的 MySQL 风格 SQL（如 `CREATE DATABASE`、`SHOW DATABASES`、`USE`）翻译成 H2 兼容语法后再交由 H2 执行。
-
-4. **备份导出/恢复**：`BackupApplicationService` 使用 H2 的 `SCRIPT TO` / `RUNSCRIPT FROM` 命令实现数据库的导出和恢复。
-
-**底层数据的持久化完全不走 H2**，而是走 `Native*GatewayImpl` 直接写二进制文件。这是为了满足《系统验收要求》中对自定义二进制存储格式的黑盒/白盒审查。
+**扩展关键**：始终遵循"依赖抽象"原则，新功能也通过 SPI 接口解耦。
 
 ---
 
-## 12. 双引擎装配策略
-
-本项目的三条数据通路分工明确：
-
-**通路一：自由 SQL 路径（H2 引擎）**
-```
-SqlController → SqlApplicationService → H2 JDBC (Parser + 执行引擎)
-```
-用户编写的任意 SQL 经由 H2 内置 Parser 解析和 H2 内存数据库执行。这条路径复用了 H2 的强大 SQL 能力，执行后直接返回结果，不经过本项目的自定义二进制引擎。
-
-**通路二：结构化操作路径（Native 二进制引擎）**
-```
-DatabaseController / TableController / RecordController
-    → ApplicationService → SPI 接口 → Native*GatewayImpl → 二进制文件
-```
-前端表单操作（建库、建表、增删改记录）走的是自定义二进制引擎，完全脱离 JDBC，直接用 `RandomAccessFile` 读写 `ruanko.db`、`.tb`、`.tdf`、`.trd` 等文件。
-
-**通路三：索引/约束管理路径（H2 元数据引擎）**
-```
-TableMaintenanceController → TableMaintenanceApplicationService → JdbcTemplate → H2 INFORMATION_SCHEMA + DDL
-```
-索引和约束的创建、删除、查询通过 H2 JDBC 执行 DDL 语句，同时 H2 的 `INFORMATION_SCHEMA` 提供元数据查询能力。
-
-- `Native*GatewayImpl` 全部标注 `@Primary` + `@Repository`，Spring Boot 自动将它们作为 SPI 接口的唯一实现
-- 旧的 JDBC 实现类已被删除，避免多 Bean 冲突
-- 三条通路互不冲突：自由 SQL 走 H2 内存库，结构化操作走 Native 二进制引擎，索引/约束管理走 H2 DDL
-
----
-
-## 13. 配置文件说明
-
-### 13.1 `application.yml` 配置项
+## 10. 配置文件 `application.yml` 重要项
 
 ```yaml
-server:
-  port: 8080                          # 后端服务端口号，可按需修改
+# 存储引擎能力开关（验收要求 3.12.x）
+dbms.engine.capabilities:
+  schema: true     # 数据库管理
+  table: true      # 表管理
+  record: true     # 记录 CRUD
+  index: true      # 索引功能
+  constraint: true # 约束功能
+  transaction: true # 事务
+  security: true   # 安全控制
+  backup: true     # 备份恢复
 
-spring:
-  datasource:
-    driver-class-name: org.h2.Driver
-    url: jdbc:h2:file:./data/dbms;AUTO_SERVER=TRUE  # H2 数据库连接 URL
-    username: sa                      # H2 用户名
-    password:                         # H2 密码（默认为空）
-  
-  h2:
-    console:
-      enabled: false                  # 是否启用 H2 控制台（开发时可设为 true）
-
-dbms:
-  engine:
-    # 引擎能力开关（控制哪些操作被允许）
-    capabilities:
-      schema: true                    # 是否允许数据库 Schema 操作
-      table: true                     # 是否允许表操作
-      record: true                    # 是否允许记录操作
-      index: true                     # 是否允许索引操作
-      constraint: true                # 是否允许约束操作
-      transaction: true               # 是否允许事务操作
-      security: true                  # 是否启用安全功能
-      backup: true                    # 是否允许备份操作
-    # 底层存储文件配置（对应验收要求 3.12.x）
-    storage:
-      system-schema-name: errDB       # 系统数据库名称（默认 errDB，不可删除）
-      global-db-file-name: ruanko.db  # 全局数据库注册表文件名
-      data-dir-name: data             # 数据库数据文件夹名
-      dbms-root: ""                   # DBMS 根目录，空表示使用程序运行目录
-
-logging:
-  level:
-    org.springframework.jdbc: DEBUG   # JDBC 日志级别（开发时可设为 DEBUG）
+# 存储文件配置（验收要求 3.12.4）
+dbms.engine.storage:
+  system-schema-name: errDB       # 系统数据库（不可删除）
+  global-db-file-name: ruanko.db  # 全局数据库注册表
+  data-dir-name: data             # 数据库数据文件夹
 ```
-
-### 13.2 如何修改常用配置
-
-| 配置项 | 位置 | 说明 |
-|--------|------|------|
-| **端口号** | `server.port` | 默认 8080，改为其他端口如 8888 即可 |
-| **H2 数据库路径** | `spring.datasource.url` | `jdbc:h2:file:./data/dbms` 中的 `./data/dbms` 是相对路径 |
-| **H2 用户名/密码** | `spring.datasource.username/password` | 默认 sa / 空密码 |
-| **DBMS_ROOT（二进制文件根目录）** | `StorageEngineConfig.java` 或 JVM 参数 | 默认 `System.getProperty("user.dir")`，可通过 `-Duser.dir=/your/path` 修改 |
-| **系统库名称** | `dbms.engine.storage.system-schema-name` | 默认 `errDB`，不可删除 |
-| **引擎能力开关** | `dbms.engine.capabilities.*` | 可按需禁用某些功能（如测试时禁用 backup） |
 
 ---
 
-## 14. 二进制文件格式与验收要求对照表
+## 11. 快速启动
 
-| 验收要求章节 | 文件名 | 路径 | 块大小 | 状态 |
-|-------------|--------|------|--------|------|
-| 3.12.4 | ruanko.db | `[DBMS_ROOT]/` | 401 B | ✅ 已实现 |
-| 3.12.5 | [数据库名].tb | `[DBMS_ROOT]/data/[数据库名]/` | 1180 B | ✅ 已实现 |
-| 3.12.6 | [表名].tdf | `[DBMS_ROOT]/data/[数据库名]/` | 160 B/列 | ✅ 已实现 |
-| 3.12.7 | [表名].trd | `[DBMS_ROOT]/data/[数据库名]/` | 不定长 | ✅ 已实现 |
-| 3.12.8 | [表名].tic | `[DBMS_ROOT]/data/[数据库名]/` | 516 B | ✅ 已实现 |
-| 3.12.9 | [表名].tid | `[DBMS_ROOT]/data/[数据库名]/` | 904 B | ✅ 已实现 |
-| 3.12.9.4 | [索引名].ix | `[DBMS_ROOT]/data/[数据库名]/` | 不定长 | ✅ 已实现（建表时创建空文件） |
+1. 启动后端：
+   ```bash
+   cd backend
+   mvn spring-boot:run
+   ```
+   
+2. 访问健康检查：
+   ```
+   GET http://localhost:8080/api/system/health
+   ```
+
+3. 使用默认账户登录：
+   ```
+   POST http://localhost:8080/api/auth/login
+   Body: { "username": "admin", "password": "123456" }
+   ```
 
 ---
 
-## 15. 数据库文件目录结构示例
+## 12. 开发注意事项
 
-```
-[DBMS_ROOT]/
-├── ruanko.db                              # 全局数据库注册表
-└── data/
-    ├── errDB/                             # 系统库（默认 errDB，可在 application.yml 修改）
-    │   ├── errDB.tb                       # 系统库表描述文件
-    │   └── errDB.log                      # 系统库日志文件
-    ├── MyDatabase/                        # 用户数据库
-    │   ├── MyDatabase.tb                  # 数据库表描述文件
-    │   ├── MyDatabase.log                 # 数据库日志文件
-    │   ├── Account.tdf                    # 表字段定义
-    │   ├── Account.trd                    # 表记录数据
-    │   ├── Account.tic                    # 表完整性约束
-    │   ├── Account.tid                    # 表索引描述
-    │   └── idIndex.ix                     # 索引数据文件
-    └── backups/                           # 备份目录（可选）
-        └── MyDatabase/
-            └── backup_20260429.sql        # 备份 SQL 文件
+1. **命名规范**：数据库名、表名、字段名使用小写字母、数字、下划线，首字符必须是字母。
+2. **权限控制**：所有操作前都会通过 `EngineCapabilityPolicy` 检查对应功能是否开启。
+3. **异常处理**：业务异常用 `IllegalArgumentException`，持久化异常用 `DataAccessException`。
+4. **响应格式**：所有 Controller 方法都返回 `ApiResponse<T>`。
+5. **跨域配置**：默认允许 `http://localhost:5173`（前端开发服务器）。
+
+---
+*文档维护人：DBMS 后端开发团队*

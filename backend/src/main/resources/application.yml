@@ -31,7 +31,7 @@ dbms:
     # 底层存储文件配置（对应验收要求 3.12.x）
     storage:
       system-schema-name: errDB       # 系统数据库名称（默认 errDB，不可删除）
-      global-db-file-name: errDB.db  # 全局数据库注册表文件名
+      global-db-file-name: ruanko.db  # 全局数据库注册表文件名（验收要求 3.12.4）
       data-dir-name: data             # 数据库数据文件夹名
       dbms-root: ""                   # DBMS 根目录，空表示使用程序运行目录 (System.getProperty("user.dir"))
 

@@ -14,17 +14,42 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+/**
+ * 表维护应用服务，提供索引和约束的管理功能。
+ * <p>
+ * 包括索引的创建、删除、重建和列表查询，以及约束的列表查询、
+ * 完整性检查和删除操作。通过 JDBC 的 DatabaseMetaData 获取元数据信息。
+ * </p>
+ *
+ * @author DBMS Team
+ */
 @Service
 public class TableMaintenanceApplicationService {
 
+    /** 数据库领域服务，用于名称校验和规范化 */
     private final DatabaseDomainService domainService;
+
+    /** Spring JDBC 模板，用于执行 SQL */
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * 构造方法。
+     *
+     * @param domainService 数据库领域服务
+     * @param jdbcTemplate  Spring JDBC 模板
+     */
     public TableMaintenanceApplicationService(DatabaseDomainService domainService, JdbcTemplate jdbcTemplate) {
         this.domainService = domainService;
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    /**
+     * 列出指定表的所有索引。
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @return 索引列表，每个元素包含索引名称、是否唯一和包含的列名
+     */
     public List<Map<String, Object>> listIndexes(String databaseName, String tableName) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
@@ -58,6 +83,15 @@ public class TableMaintenanceApplicationService {
         });
     }
 
+    /**
+     * 在指定表的指定列上创建索引。
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @param indexName    索引名
+     * @param unique       是否唯一索引
+     * @param columns      索引列列表
+     */
     public void createIndex(String databaseName, String tableName, String indexName, boolean unique, List<String> columns) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
@@ -74,6 +108,12 @@ public class TableMaintenanceApplicationService {
         jdbcTemplate.execute(sql);
     }
 
+    /**
+     * 删除指定索引。
+     *
+     * @param databaseName 数据库名称
+     * @param indexName    索引名
+     */
     public void dropIndex(String databaseName, String indexName) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(indexName, "索引名");
@@ -81,6 +121,13 @@ public class TableMaintenanceApplicationService {
         jdbcTemplate.execute(sql);
     }
 
+    /**
+     * 重建指定索引（先删除再创建）。
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @param indexName    索引名
+     */
     public void rebuildIndex(String databaseName, String tableName, String indexName) {
         List<Map<String, Object>> indexes = listIndexes(databaseName, tableName);
         Map<String, Object> match = indexes.stream()
@@ -94,6 +141,17 @@ public class TableMaintenanceApplicationService {
         createIndex(databaseName, tableName, indexName, unique, columns);
     }
 
+    /**
+     * 列出指定表的所有约束。
+     * <p>
+     * 包括主键约束、唯一约束、外键约束和 NOT NULL 约束。
+     * 通过 JDBC DatabaseMetaData 获取元数据信息。
+     * </p>
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @return 约束列表，每个元素包含名称、类型、列名（外键还包含引用信息）
+     */
     public List<Map<String, Object>> listConstraints(String databaseName, String tableName) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
@@ -101,6 +159,7 @@ public class TableMaintenanceApplicationService {
             DatabaseMetaData metaData = connection.getMetaData();
             List<Map<String, Object>> constraints = new ArrayList<>();
 
+            // 获取主键约束
             Map<String, List<String>> primaryKeys = new LinkedHashMap<>();
             try (ResultSet resultSet = metaData.getPrimaryKeys(null, databaseName.toUpperCase(), tableName.toUpperCase())) {
                 while (resultSet.next()) {
@@ -113,6 +172,7 @@ public class TableMaintenanceApplicationService {
             }
             primaryKeys.forEach((name, columns) -> constraints.add(buildConstraintItem(name, "PRIMARY KEY", columns)));
 
+            // 获取唯一索引（排除主键）
             for (Map<String, Object> index : listIndexes(databaseName, tableName)) {
                 if (!Boolean.TRUE.equals(index.get("unique"))) {
                     continue;
@@ -126,6 +186,7 @@ public class TableMaintenanceApplicationService {
                 constraints.add(buildConstraintItem(name, "UNIQUE", columns));
             }
 
+            // 获取外键约束
             Map<String, List<String>> foreignKeys = new LinkedHashMap<>();
             Map<String, String> fkTargets = new HashMap<>();
             try (ResultSet resultSet = metaData.getImportedKeys(null, databaseName.toUpperCase(), tableName.toUpperCase())) {
@@ -144,6 +205,7 @@ public class TableMaintenanceApplicationService {
                 constraints.add(item);
             });
 
+            // 获取 NOT NULL 约束
             try (ResultSet resultSet = metaData.getColumns(null, databaseName.toUpperCase(), tableName.toUpperCase(), null)) {
                 while (resultSet.next()) {
                     if (resultSet.getInt("NULLABLE") == DatabaseMetaData.columnNoNulls) {
@@ -156,6 +218,16 @@ public class TableMaintenanceApplicationService {
         });
     }
 
+    /**
+     * 检查指定表的约束完整性和数据一致性。
+     * <p>
+     * 对于 NOT NULL 约束，检查是否存在空值；对于唯一约束和主键约束，检查是否存在重复数据。
+     * </p>
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @return 检查结果，包含是否通过、问题列表和检查项数量
+     */
     public Map<String, Object> checkConstraints(String databaseName, String tableName) {
         List<Map<String, Object>> constraints = listConstraints(databaseName, tableName);
         List<Map<String, Object>> issues = new ArrayList<>();
@@ -192,6 +264,16 @@ public class TableMaintenanceApplicationService {
         );
     }
 
+    /**
+     * 删除指定约束。
+     * <p>
+     * 支持删除主键约束、NOT NULL 约束和其他类型的约束。
+     * </p>
+     *
+     * @param databaseName   数据库名称
+     * @param tableName      表名
+     * @param constraintName 约束名称
+     */
     public void dropConstraint(String databaseName, String tableName, String constraintName) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
@@ -219,6 +301,14 @@ public class TableMaintenanceApplicationService {
                 + " DROP CONSTRAINT " + domainService.quoteIdentifier(constraintName, "约束名"));
     }
 
+    /**
+     * 构建约束项 Map。
+     *
+     * @param name    约束名称
+     * @param type    约束类型（PRIMARY KEY、UNIQUE、FOREIGN KEY、NOT NULL）
+     * @param columns 约束包含的列名列表
+     * @return 约束项 Map
+     */
     private Map<String, Object> buildConstraintItem(String name, String type, List<String> columns) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("name", name);
@@ -227,6 +317,13 @@ public class TableMaintenanceApplicationService {
         return item;
     }
 
+    /**
+     * 构建完全限定的表名（database.table）。
+     *
+     * @param databaseName 数据库名称
+     * @param tableName    表名
+     * @return 完全限定的表名字符串
+     */
     private String qualifiedTable(String databaseName, String tableName) {
         return domainService.quoteIdentifier(databaseName, "数据库名") + "." + domainService.quoteIdentifier(tableName, "表名");
     }

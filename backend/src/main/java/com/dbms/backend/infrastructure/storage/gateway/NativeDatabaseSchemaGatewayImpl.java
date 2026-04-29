@@ -55,7 +55,7 @@ public class NativeDatabaseSchemaGatewayImpl implements DatabaseSchemaGateway {
     private void ensureSchemaFiles(String schemaName) {
         File dbFolder = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
         if (!dbFolder.exists() && !dbFolder.mkdirs()) {
-            throw new RuntimeException("创建数据库文件夹失败: " + dbFolder.getAbsolutePath());
+            throw new RuntimeException("创建数据库文件夹失败：" + dbFolder.getAbsolutePath());
         }
 
         // 3.12.3(2)：建库时必须创建 [库名].tb 与 [库名].log
@@ -65,7 +65,25 @@ public class NativeDatabaseSchemaGatewayImpl implements DatabaseSchemaGateway {
             if (!tbFile.exists()) tbFile.createNewFile();
             if (!logFile.exists()) logFile.createNewFile();
         } catch (IOException e) {
-            throw new RuntimeException("创建 .tb/.log 失败: " + e.getMessage(), e);
+            throw new RuntimeException("创建 .tb/.log 失败：" + e.getMessage(), e);
+        }
+        
+        // 写入建库日志
+        writeLog(logFile, "CREATE_DATABASE", schemaName, "数据库创建成功");
+    }
+    
+    /**
+     * 写入数据库日志文件
+     * 日志格式：[时间戳] 操作类型 | 对象名称 | 描述
+     */
+    private void writeLog(File logFile, String operation, String objectName, String description) {
+        try (RandomAccessFile raf = new RandomAccessFile(logFile, "rw")) {
+            raf.seek(raf.length());
+            String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
+            String logLine = String.format("[%s] %s | %s | %s%n", timestamp, operation, objectName, description);
+            raf.write(logLine.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            // 日志写入失败不阻断主流程
         }
     }
 
@@ -126,6 +144,13 @@ public class NativeDatabaseSchemaGatewayImpl implements DatabaseSchemaGateway {
         if (getSystemSchemaName().equalsIgnoreCase(schemaName)) {
             throw new IllegalArgumentException("系统数据库不允许删除");
         }
+        
+        File dbFolder = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
+        File logFile = new File(dbFolder, schemaName + ".log");
+        
+        // 先写日志，再执行删除
+        writeLog(logFile, "DROP_DATABASE", schemaName, "数据库删除成功");
+        
         File dbFile = new File(StorageEngineConfig.getGLOBAL_DB_FILE());
         try (RandomAccessFile raf = new RandomAccessFile(dbFile, "rw")) {
             long length = raf.length();
@@ -141,11 +166,10 @@ public class NativeDatabaseSchemaGatewayImpl implements DatabaseSchemaGateway {
                 pos += DB_BLOCK_SIZE;
             }
         } catch (IOException e) {
-            throw new RuntimeException("删除数据库信息失败: " + e.getMessage(), e);
+            throw new RuntimeException("删除数据库信息失败：" + e.getMessage(), e);
         }
         
         // 物理删除文件夹
-        File dbFolder = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
         if (dbFolder.exists()) {
             deleteFolder(dbFolder);
         }

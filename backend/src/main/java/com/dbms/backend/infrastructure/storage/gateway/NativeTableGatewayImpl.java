@@ -44,18 +44,19 @@ public class NativeTableGatewayImpl implements TableGateway {
         if (!dbDir.exists()) throw new IllegalArgumentException("当前数据库不存在：" + schemaName);
 
         String tbFilePath = dbPath + File.separator + schemaName + ".tb";
+        File logFile = new File(dbPath, schemaName + ".log");
         
-        // 约定俗成的物理文件体系（系统验收要求3.12.3强制要求存在）
+        // 约定俗成的物理文件体系（系统验收要求 3.12.3 强制要求存在）
         String tdfPath = dbPath + File.separator + tableName + ".tdf"; // 表定长规则定义
         String trdPath = dbPath + File.separator + tableName + ".trd"; // 行实体数据文件
         String ticPath = dbPath + File.separator + tableName + ".tic"; // 完整性约束描述
         String tidPath = dbPath + File.separator + tableName + ".tid"; // 物理索引数据
 
-        // 第二步：将表名、四个文件的完整绝对路径、和记录数，全部算好字节位置（1180字节）然后填入 `dbname.tb` 文件
+        // 第二步：将表名、四个文件的完整绝对路径、和记录数，全部算好字节位置（1180 字节）然后填入 `dbname.tb` 文件
         try (RandomAccessFile tbRaf = new RandomAccessFile(new File(tbFilePath), "rw")) {
             tbRaf.seek(tbRaf.length());
             BinaryIoUtils.writeFixedString(tbRaf, tableName, 128);  // name
-            tbRaf.writeInt(0);                                      // record_num 初始0
+            tbRaf.writeInt(0);                                      // record_num 初始 0
             tbRaf.writeInt(columns.size());                         // field_num
             BinaryIoUtils.writeFixedString(tbRaf, tdfPath, 256);    // tdf
             BinaryIoUtils.writeFixedString(tbRaf, ticPath, 256);    // tic
@@ -64,7 +65,7 @@ public class NativeTableGatewayImpl implements TableGateway {
             BinaryIoUtils.writeDateTime(tbRaf, System.currentTimeMillis()); // crtime
             tbRaf.writeInt((int) (System.currentTimeMillis() / 1000));      // mtime (INTEGER)
         } catch (IOException e) {
-            throw new RuntimeException("写入表描述文件(.tb)失败: " + e.getMessage(), e);
+            throw new RuntimeException("写入表描述文件 (.tb) 失败：" + e.getMessage(), e);
         }
 
         // 3. 生成字段定义文件 (.tdf)
@@ -78,7 +79,7 @@ public class NativeTableGatewayImpl implements TableGateway {
                 int typeCode = getTypeCode(col.getType());
                 tdfRaf.writeInt(typeCode);                                // type
                 
-                // param存放VARCHAR长度等，如果是固定类型就传0，这里取用对象中的 length
+                // param 存放 VARCHAR 长度等，如果是固定类型就传 0，这里取用对象中的 length
                 int param = (col.getLength() != null) ? col.getLength() : 0;
                 tdfRaf.writeInt(param);                                   // param
                 
@@ -89,17 +90,20 @@ public class NativeTableGatewayImpl implements TableGateway {
                 tdfRaf.writeInt(integrity);                               // integrities
             }
         } catch (Exception e) {
-             throw new RuntimeException("写入表定义文件(.tdf)失败: " + e.getMessage(), e);
+             throw new RuntimeException("写入表定义文件 (.tdf) 失败：" + e.getMessage(), e);
         }
 
         // 4. 创建其余空的数据文件和索引文件
         createEmptyFile(trdPath);
         ensureTicFileWithPlaceholder(ticPath);
         ensureTidFileWithPlaceholder(tidPath, trdPath);
-        // 3.12.9.4 索引数据文件: [索引名].ix，建表时先创建空的（索引创建时再填充）
-        // 默认主键索引文件: [tableName]Index.ix
+        // 3.12.9.4 索引数据文件：[索引名].ix，建表时先创建空的（索引创建时再填充）
+        // 默认主键索引文件：[tableName]Index.ix
         String defaultIxPath = dbPath + File.separator + tableName + "Index.ix";
         createEmptyFile(defaultIxPath);
+        
+        // 写入建表日志
+        writeLog(logFile, "CREATE_TABLE", tableName, "表创建成功，字段数：" + columns.size());
     }
 
     @Override
@@ -107,7 +111,11 @@ public class NativeTableGatewayImpl implements TableGateway {
         String dbPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName;
         String tbFilePath = dbPath + File.separator + schemaName + ".tb";
         File tbFile = new File(tbFilePath);
+        File logFile = new File(dbPath, schemaName + ".log");
         if (!tbFile.exists()) return;
+
+        // 先写日志
+        writeLog(logFile, "DROP_TABLE", tableName, "表删除成功");
 
         // 1. 逻辑删除表描述文件 .tb 里的记录
         try (RandomAccessFile tbRaf = new RandomAccessFile(tbFile, "rw")) {
@@ -124,7 +132,7 @@ public class NativeTableGatewayImpl implements TableGateway {
                 pos += TABLE_BLOCK_SIZE;
             }
         } catch (IOException e) {
-            throw new RuntimeException("删除表描述失败: " + e.getMessage(), e);
+            throw new RuntimeException("删除表描述失败：" + e.getMessage(), e);
         }
 
         // 2. 物理删除关联的所有文件（包括 .ix 索引数据文件）
@@ -166,16 +174,122 @@ public class NativeTableGatewayImpl implements TableGateway {
 
     @Override
     public void alterTableStructure(String schemaName, String tableName, List<ColumnDefinition> columns) {
-        // 中期方案：为了防毁坏，通常是直接重写 .tdf 文件
-        // 这里留作扩展
+        // 重写 .tdf 文件实现表结构变更
+        String dbPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName;
+        String tdfPath = dbPath + File.separator + tableName + ".tdf";
+        File tdfFile = new File(tdfPath);
+        
+        if (!tdfFile.exists()) {
+            throw new IllegalArgumentException("表定义文件不存在：" + tdfPath);
+        }
+        
+        try (RandomAccessFile tdfRaf = new RandomAccessFile(tdfFile, "rw")) {
+            tdfRaf.setLength(0); // 清空文件
+            
+            int order = 1;
+            for (ColumnDefinition col : columns) {
+                tdfRaf.writeInt(order++);                                 // order
+                BinaryIoUtils.writeFixedString(tdfRaf, col.getName(), 128); // name
+                
+                int typeCode = getTypeCode(col.getType());
+                tdfRaf.writeInt(typeCode);                                // type
+                
+                int param = (col.getLength() != null) ? col.getLength() : 0;
+                tdfRaf.writeInt(param);                                   // param
+                
+                BinaryIoUtils.writeDateTime(tdfRaf, System.currentTimeMillis()); // mtime
+                
+                int integrity = 0;
+                if (col.getPk() != null && col.getPk()) integrity |= 2;   // bit1 = PK
+                if (col.getNullable() != null && !col.getNullable()) integrity |= 1; // bit0 = NOT NULL
+                tdfRaf.writeInt(integrity);                               // integrities
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("更新表定义文件(.tdf)失败：" + e.getMessage(), e);
+        }
     }
 
     @Override
     public Map<String, Object> getTableDetail(String schemaName, String tableName) {
-        // 中期方案：读取 .tb 和 .tdf 返回信息
         Map<String, Object> detail = new HashMap<>();
         detail.put("tableName", tableName);
+        
+        try {
+            List<Map<String, Object>> columns = readColumnDefinitions(schemaName, tableName);
+            detail.put("columns", columns);
+        } catch (Exception e) {
+            detail.put("columns", new ArrayList<Map<String, Object>>());
+            detail.put("error", "读取表定义失败：" + e.getMessage());
+        }
+        
         return detail;
+    }
+    
+    /**
+     * 从 .tdf 文件读取列定义
+     */
+    private List<Map<String, Object>> readColumnDefinitions(String schemaName, String tableName) throws IOException {
+        String dbPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName;
+        String tdfPath = dbPath + File.separator + tableName + ".tdf";
+        File tdfFile = new File(tdfPath);
+        
+        if (!tdfFile.exists()) {
+            throw new IllegalArgumentException("表定义文件不存在：" + tdfPath);
+        }
+        
+        List<Map<String, Object>> columns = new ArrayList<>();
+        
+        try (RandomAccessFile raf = new RandomAccessFile(tdfFile, "r")) {
+            long fileLength = raf.length();
+            long pos = 0;
+            
+            while (pos < fileLength) {
+                raf.seek(pos);
+                
+                int order = raf.readInt();                                  // order
+                String name = BinaryIoUtils.readFixedString(raf, 128);      // name
+                int typeCode = raf.readInt();                               // type
+                int param = raf.readInt();                                  // param
+                long mtime = BinaryIoUtils.readDateTime(raf);               // mtime
+                int integrities = raf.readInt();                            // integrities
+                
+                pos += FIELD_BLOCK_SIZE;
+                
+                if (!name.isEmpty()) {
+                    Map<String, Object> column = new HashMap<>();
+                    column.put("order", order);
+                    column.put("name", name);
+                    column.put("type", getTypeName(typeCode));
+                    column.put("typeCode", typeCode);
+                    column.put("length", param > 0 ? param : null);
+                    column.put("nullable", (integrities & 1) == 0);         // bit0=0 表示允许空
+                    column.put("primaryKey", (integrities & 2) != 0);       // bit1=1 表示主键
+                    
+                    columns.add(column);
+                }
+            }
+        }
+        
+        return columns;
+    }
+    
+    /**
+     * 将类型代码转换为类型名称
+     */
+    private String getTypeName(int typeCode) {
+        if (typeCode == 1) {
+            return "INT";
+        } else if (typeCode == 2) {
+            return "BOOL";
+        } else if (typeCode == 3) {
+            return "DOUBLE";
+        } else if (typeCode == 4) {
+            return "VARCHAR";
+        } else if (typeCode == 5) {
+            return "DATETIME";
+        } else {
+            return "UNKNOWN";
+        }
     }
 
     private void createEmptyFile(String path) {
@@ -237,5 +351,20 @@ public class NativeTableGatewayImpl implements TableGateway {
         if (upper.contains("CHAR")) return 4; // VARCHAR / CHAR
         if (upper.contains("DATE") || upper.contains("TIME")) return 5;
         return 4; // 默认做字符串处理
+    }
+    
+    /**
+     * 写入数据库日志文件
+     * 日志格式：[时间戳] 操作类型 | 对象名称 | 描述
+     */
+    private void writeLog(File logFile, String operation, String objectName, String description) {
+        try (RandomAccessFile raf = new RandomAccessFile(logFile, "rw")) {
+            raf.seek(raf.length());
+            String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new java.util.Date());
+            String logLine = String.format("[%s] %s | %s | %s%n", timestamp, operation, objectName, description);
+            raf.write(logLine.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            // 日志写入失败不阻断主流程
+        }
     }
 }
