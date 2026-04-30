@@ -32,18 +32,13 @@ backend/src/main/java/com/dbms/backend/
 │   ├── SystemController.java            # 系统健康检查
 │   ├── DatabaseController.java          # 数据库的增删查
 │   ├── TableController.java             # 数据表的增删改查
-│   ├── TableMaintenanceController.java  # 索引 & 约束管理
-│   ├── RecordController.java            # 记录的增删改查
-│   ├── SqlController.java               # 自由 SQL 执行入口
-│   └── BackupController.java            # 数据库备份 & 恢复
+│   └── SqlController.java               # 自由 SQL 执行入口
 ├── application/                         # 应用服务层（用例编排）
 │   ├── AuthApplicationService.java      # 用户认证用例
 │   ├── DatabaseApplicationService.java  # 数据库管理用例
 │   ├── TableApplicationService.java     # 表管理用例
-│   ├── TableMaintenanceApplicationService.java  # 表维护用例（索引/约束）
 │   ├── RecordApplicationService.java    # 记录管理用例
-│   ├── SqlApplicationService.java       # SQL 执行用例
-│   └── BackupApplicationService.java    # 备份恢复用例
+│   └── SqlApplicationService.java       # SQL 执行用例
 ├── domain/                              # 领域规则层
 │   ├── DatabaseDomainService.java       # 命名校验 & 规范化 & 引号包裹
 │   ├── EngineCapabilityPolicy.java      # 引擎能力开关（权限控制）
@@ -123,6 +118,46 @@ backend/src/main/java/com/dbms/backend/
 | `BackupApplicationService` | `BackupController` | `domain/DatabaseDomainService`、`spi/DatabaseSchemaGateway` | 备份与恢复 |
 
 **一句话总结**：每个 ApplicationService 封装一个业务用例，编排多个领域服务（DomainService）和基础设施端口（Gateway），是**业务流程的真正执行者**。
+
+---
+
+## 3.1 SQL 解析支持范围（演示版）
+
+当前 SQL 执行入口已改为**直接路由到自研原生二进制引擎**。支持的 SQL 子集如下：
+
+**数据库层**
+- `CREATE DATABASE db`
+- `DROP DATABASE db`
+- `SHOW DATABASES`
+- `USE db`（仅返回提示，不维护连接级状态）
+
+**表结构层**
+- `CREATE TABLE t (col TYPE [NOT NULL] [PRIMARY KEY] [UNIQUE], ...)`
+- `DROP TABLE t`
+- `ALTER TABLE t ADD [COLUMN] col TYPE ...`
+- `ALTER TABLE t DROP [COLUMN] col`
+- `ALTER TABLE t MODIFY/ALTER [COLUMN] col TYPE ...`
+- `SHOW TABLES`
+- `DESCRIBE t` / `DESC t`
+
+**记录层**
+- `INSERT INTO t (col, ...) VALUES (...)`
+- `SELECT col1, col2 FROM t [WHERE ...] [ORDER BY ...] [LIMIT ...]`
+- `UPDATE t SET col = val [, ...] [WHERE ...]`
+- `DELETE FROM t [WHERE ...]`
+
+**WHERE 支持**
+- `AND` / `OR`
+- 比较运算：`=`, `!=`, `>`, `<`, `>=`, `<=`
+
+**注意事项（演示限制）**
+1. `UPDATE` / `DELETE` 仅支持 `AND` + `=` 等值条件（不支持 `OR` 或范围比较）。
+2. `SELECT` 的排序与过滤在应用层完成，默认最多读取 200 行用于演示。
+3. `ALTER TABLE` 仅更新表定义文件，不对已有记录进行结构迁移。
+
+**关于 H2**
+- 项目已完全脱离 H2 依赖，不再使用任何 H2 相关组件。
+- 所有功能均通过自研原生二进制存储引擎实现。
 
 ---
 

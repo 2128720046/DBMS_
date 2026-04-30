@@ -60,8 +60,8 @@ public class StorageEngineConfig {
     }
     
     private static void recomputePaths() {
-        globalDbFile = dbmsRoot + File.separator + globalDbFileName;
         dataDir = dbmsRoot + File.separator + dataDirName;
+        globalDbFile = dataDir + File.separator + globalDbFileName;
     }
     
     // 静态初始化块，初始化路径

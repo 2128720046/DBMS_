@@ -1,6 +1,5 @@
 package com.dbms.backend.common;
 
-import org.springframework.dao.DataAccessException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -16,17 +15,6 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException.class)
     public ApiResponse<Void> handleIllegalArgumentException(IllegalArgumentException ex) {
         return ApiResponse.fail(ErrorCode.BAD_REQUEST, ex.getMessage());
-    }
-
-    /**
-     * 处理数据库层访问异常。
-     *
-     * @param ex 异常来自 JDBC 执行阶段。
-     * @return 500 协议错误响应。
-     */
-    @ExceptionHandler(DataAccessException.class)
-    public ApiResponse<Void> handleDataAccessException(DataAccessException ex) {
-        return ApiResponse.fail(ErrorCode.DATA_ACCESS_ERROR, "数据库操作失败: " + ex.getMostSpecificCause().getMessage());
     }
 
     /**

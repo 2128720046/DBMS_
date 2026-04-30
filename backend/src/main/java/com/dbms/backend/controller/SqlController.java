@@ -14,8 +14,7 @@ import java.util.Map;
 /**
  * SQL 执行控制器，处理 SQL 语句执行的 HTTP 请求。
  * <p>
- * 提供 SQL 语句执行功能，支持 MySQL 语法到 H2 语法的自动转换，
- * 并包含安全策略校验。允许跨域访问前端开发服务器（localhost:5173）。
+ * 提供 SQL 语句执行功能。允许跨域访问前端开发服务器（localhost:5173）。
  * </p>
  *
  * @author DBMS Team

@@ -31,6 +31,11 @@ public class StorageEngineProperties {
      */
     private String dbmsRoot = "";
 
+    /**
+     * 是否自动创建系统数据库
+     */
+    private Boolean autoCreateSystemSchema = false;
+
     // ==================== Setter 方法 ====================
 
     public void setSystemSchemaName(String systemSchemaName) {
@@ -71,5 +76,13 @@ public class StorageEngineProperties {
 
     public String getDbmsRoot() {
         return dbmsRoot;
+    }
+
+    public Boolean getAutoCreateSystemSchema() {
+        return autoCreateSystemSchema;
+    }
+
+    public void setAutoCreateSystemSchema(Boolean autoCreateSystemSchema) {
+        this.autoCreateSystemSchema = autoCreateSystemSchema;
     }
 }

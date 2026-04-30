@@ -2,6 +2,7 @@ package com.dbms.backend.infrastructure.storage.gateway;
 
 import com.dbms.backend.domain.spi.DatabaseSchemaGateway;
 import com.dbms.backend.infrastructure.storage.config.StorageEngineConfig;
+import com.dbms.backend.infrastructure.storage.config.StorageEngineProperties;
 import com.dbms.backend.infrastructure.storage.io.BinaryIoUtils;
 
 import org.springframework.context.annotation.Primary;
@@ -26,10 +27,15 @@ import java.util.List;
 @Repository
 public class NativeDatabaseSchemaGatewayImpl implements DatabaseSchemaGateway {
 
-    public NativeDatabaseSchemaGatewayImpl() {
+    public NativeDatabaseSchemaGatewayImpl(StorageEngineProperties properties) {
         StorageEngineConfig.initializeRoot();
-        // 注意：不再自动创建系统库，避免每次启动都写入 ruanko.db
-        // 系统库由用户通过 createSchema 接口显式创建
+        if (Boolean.TRUE.equals(properties.getAutoCreateSystemSchema())) {
+            try {
+                ensureSchemaExists(StorageEngineConfig.getSystemSchemaName());
+            } catch (Exception e) {
+                // 初始化失败不中断启动
+            }
+        }
     }
 
     /**
