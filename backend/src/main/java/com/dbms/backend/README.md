@@ -6,15 +6,12 @@
 
 ## 更新记录
 
-### 2026-04-29 - 代码注释增强
-为所有Java文件添加了全面的代码注释，包括：
-1. **类级别注释**：每个类都有明确的类说明，描述类的职责和用途
-2. **方法级别注释**：所有public方法都有详细的参数、返回值说明
-3. **接口注释**：SPI接口添加了详细的契约说明
-4. **模型类注释**：DTO和模型类添加了清晰的使用说明
-5. **控制器注释**：所有REST控制器接口都有详细的API说明
-
-现在代码具有完整的中文文档，便于维护和团队协作。
+### 2026-04-30 - 完全脱离H2依赖，实现自研原生二进制存储引擎
+本次更新完成了以下重要改进：
+1. **彻底移除H2依赖**：删除所有H2相关代码、配置和依赖
+2. **实现原生二进制存储引擎**：所有数据存储在`data/`目录下，使用自定义二进制格式
+3. **修复多项关键Bug**：数据库文件路径、表创建位置、多次INSERT查询等问题
+4. **添加详细中文注释**：所有Java文件都有完整的类和方法级别注释
 
 ---
 
@@ -80,7 +77,7 @@ backend/src/main/java/com/dbms/backend/
 |------|------|
 | `ApiResponse<T>` | 所有 Controller 返回的统一 JSON 结构：`{ code, message, data }`。提供 `ok()` 和 `fail()` 快捷工厂方法。 |
 | `ErrorCode` | 协议枚举：`SUCCESS(200)`、`BAD_REQUEST(400)`、`DATA_ACCESS_ERROR(500)`、`INTERNAL_ERROR(500)`。 |
-| `GlobalExceptionHandler` | `@RestControllerAdvice` 全局异常处理器。捕获 `IllegalArgumentException` → 400、`DataAccessException` → 500、`Exception` → 500，确保不把异常栈直接暴露给前端。 |
+| `GlobalExceptionHandler` | `@RestControllerAdvice` 全局异常处理器。捕获 `IllegalArgumentException` → 400、运行时异常 → 500，确保不把异常栈直接暴露给前端。 |
 
 **一句话总结**：这一层负责"整个后端对外响应长什么样"以及"异常怎么统一兜底"。
 
@@ -96,10 +93,8 @@ backend/src/main/java/com/dbms/backend/
 | `SystemController` | `/api/system` | `/health` 健康检查：返回 status、version、uptime |
 | `DatabaseController` | `/api/databases` | 创建 / 列表 / 删除数据库 |
 | `TableController` | `/api/databases/{db}/tables` | 创建 / 列表 / 详情 / 改结构 / 删除表 |
-| `TableMaintenanceController` | `/api/databases/{db}/tables/{tbl}` | 索引（增删查重建）& 约束（查、删除、校验） |
 | `RecordController` | `/api/databases/{db}/tables/{tbl}/records` | 条件查询 / 插入 / 更新 / 删除记录 |
 | `SqlController` | `/api/sql` | 自由执行 SQL（受白名单限制） |
-| `BackupController` | `/api/databases/{db}/backups` | 创建备份 / 列表 / 恢复 / 删除 |
 
 **一句话总结**：Controller 里**不放任何业务逻辑**，只做参数接收和路由转发。
 
@@ -112,16 +107,14 @@ backend/src/main/java/com/dbms/backend/
 | `AuthApplicationService` | `AuthController` | `domain/EngineCapabilityPolicy` | 用户认证 & 权限验证 |
 | `DatabaseApplicationService` | `DatabaseController` | `domain/DatabaseDomainService`、`spi/DatabaseSchemaGateway` | 数据库的生命周期管理（创建/列表/删除） |
 | `TableApplicationService` | `TableController` | `domain/DatabaseDomainService`、`spi/TableGateway` | 表的生命周期管理（创建/列表/结构修改/删除） |
-| `TableMaintenanceApplicationService` | `TableMaintenanceController` | `spi/TableGateway` | 索引与约束管理 |
 | `RecordApplicationService` | `RecordController` | `spi/RecordGateway` | 记录的 CRUD（条件查询/插入/更新/删除） |
 | `SqlApplicationService` | `SqlController` | 全部 `ApplicationService` | SQL 解析、权限校验、路由到对应应用服务 |
-| `BackupApplicationService` | `BackupController` | `domain/DatabaseDomainService`、`spi/DatabaseSchemaGateway` | 备份与恢复 |
 
 **一句话总结**：每个 ApplicationService 封装一个业务用例，编排多个领域服务（DomainService）和基础设施端口（Gateway），是**业务流程的真正执行者**。
 
 ---
 
-## 3.1 SQL 解析支持范围（演示版）
+## 3.1 SQL 解析支持范围
 
 当前 SQL 执行入口已改为**直接路由到自研原生二进制引擎**。支持的 SQL 子集如下：
 
@@ -141,7 +134,7 @@ backend/src/main/java/com/dbms/backend/
 - `DESCRIBE t` / `DESC t`
 
 **记录层**
-- `INSERT INTO t (col, ...) VALUES (...)`
+- `INSERT INTO t (col, ...) VALUES (...)` ⚠️ **必须指定字段列表**
 - `SELECT col1, col2 FROM t [WHERE ...] [ORDER BY ...] [LIMIT ...]`
 - `UPDATE t SET col = val [, ...] [WHERE ...]`
 - `DELETE FROM t [WHERE ...]`
@@ -154,10 +147,7 @@ backend/src/main/java/com/dbms/backend/
 1. `UPDATE` / `DELETE` 仅支持 `AND` + `=` 等值条件（不支持 `OR` 或范围比较）。
 2. `SELECT` 的排序与过滤在应用层完成，默认最多读取 200 行用于演示。
 3. `ALTER TABLE` 仅更新表定义文件，不对已有记录进行结构迁移。
-
-**关于 H2**
-- 项目已完全脱离 H2 依赖，不再使用任何 H2 相关组件。
-- 所有功能均通过自研原生二进制存储引擎实现。
+4. **INSERT 语句必须指定字段列表**，例如：`INSERT INTO t (id, name) VALUES (1, 'test')`
 
 ---
 
@@ -167,7 +157,7 @@ backend/src/main/java/com/dbms/backend/
 
 | 文件 | 职责 |
 |------|------|
-| `DatabaseDomainService` | 数据库名的命名规范、字符串正规化、表名包裹引号等**业务规则**。 |
+| `DatabaseDomainService` | 数据库名的命名规范、字符串正规化、标识符校验等**业务规则**。 |
 | `EngineCapabilityPolicy` | 开关控制：基于 `dbms.engine.capabilities.*` 配置，控制哪些功能开启/关闭。 |
 
 ### 4.1 `domain/spi/` — 端口接口（SPI）
@@ -176,9 +166,9 @@ backend/src/main/java/com/dbms/backend/
 
 | 接口 | 实现类 | 职责 |
 |------|--------|------|
-| `DatabaseSchemaGateway` | `NativeDatabaseSchemaGatewayImpl` | 数据库生命周期：创建、检查、列表、删除（底层读写 `ruanko.db` 等二进制文件） |
-| `TableGateway` | `NativeTableGatewayImpl` | 表生命周期：创建、列表、详情、改结构、删除（底层读写 `.tbl`、`.idx`、`.cns` 等二进制文件） |
-| `RecordGateway` | `NativeRecordGatewayImpl` | 记录 CRUD：查询、插入、更新、删除（底层读写 `.dat` 等二进制文件） |
+| `DatabaseSchemaGateway` | `NativeDatabaseSchemaGatewayImpl` | 数据库生命周期：创建、检查、列表、删除（底层读写 `.db` 等二进制文件） |
+| `TableGateway` | `NativeTableGatewayImpl` | 表生命周期：创建、列表、详情、改结构、删除（底层读写 `.tdf`、`.idx`、`.cns` 等二进制文件） |
+| `RecordGateway` | `NativeRecordGatewayImpl` | 记录 CRUD：查询、插入、更新、删除（底层读写 `.trd` 等二进制文件） |
 
 **一句话总结**：领域层定义"我需要做什么"，基础设施层实现"我怎么去做"。两者通过 SPI 解耦，未来可以替换不同的存储引擎（比如换成 MySQL、PostgreSQL）。
 
@@ -198,7 +188,7 @@ DTO 是前端请求体（`@RequestBody`）和后端应用层之间的桥梁。
 | `UpdateRecordRequest` | `filters`、`values` | 更新符合条件的记录 |
 | `DeleteRecordRequest` | `filters` | 删除符合条件的记录 |
 | `LoginRequest` | `username`、`password` | 登录请求 |
-| `SqlExecuteRequest` | `sql` | 执行自由 SQL |
+| `SqlExecuteRequest` | `databaseName`、`sql` | 执行自由 SQL |
 
 **一句话总结**：DTO 用于数据校验和类型转换，确保请求数据符合预期格式。
 
@@ -217,28 +207,90 @@ DTO 是前端请求体（`@RequestBody`）和后端应用层之间的桥梁。
 
 ## 7. `infrastructure/storage/` — 原生二进制存储引擎
 
-这一层是 SPI 接口的具体实现，负责所有二进制文件的读写。
+这一层是 SPI 接口的具体实现，负责所有二进制文件的读写。**项目已完全脱离 H2 依赖**，所有数据存储使用自研的二进制格式。
 
-### 7.1 `config/` — 存储引擎配置
+### 7.1 数据存储结构
+
+```
+backend/
+├── data/                          # 数据存储根目录
+│   ├── ruanko.db                  # 全局数据库注册表（记录所有数据库）
+│   ├── errDB/                     # 系统数据库（不可删除）
+│   │   ├── errDB.tb               # 表清单
+│   │   └── errDB.log              # 操作日志
+│   └── [database_name]/           # 用户数据库
+│       ├── [table_name].tdf       # 表定义文件（Table Definition File）
+│       ├── [table_name].trd       # 记录数据文件（Record Data File）
+│       ├── [table_name].tb        # 表清单
+│       └── [table_name].log       # 操作日志
+```
+
+### 7.2 二进制文件格式
+
+#### 数据库注册表（ruanko.db）
+每个数据库占一个 **DatabaseBlock**（401 字节）：
+| 字段 | 类型 | 大小 |
+|------|------|------|
+| name | CHAR | 128 字节 |
+| type | BOOL | 1 字节 |
+| filename | CHAR | 256 字节 |
+| crtime | DATETIME | 16 字节 |
+
+#### 表定义文件（.tdf）
+每个字段占一个 **FieldBlock**（160 字节）：
+| 字段 | 类型 | 大小 |
+|------|------|------|
+| order | INT | 4 字节 |
+| name | CHAR | 128 字节 |
+| type | INT | 4 字节 |
+| param | INT | 4 字节 |
+| mtime | DATETIME | 16 字节 |
+| integrity | INT | 4 字节 |
+
+#### 记录数据文件（.trd）
+每条记录定长存储：
+| 字段 | 类型 | 大小 |
+|------|------|------|
+| row_status | INT | 4 字节（1=有效，0=已删除） |
+| col_1 | 按类型 | 见下表 |
+| col_2 | 按类型 | 见下表 |
+| ... | ... | ... |
+
+**字段存储大小**：
+| 类型代码 | Java 类型 | 存储大小 |
+|----------|-----------|----------|
+| 1 | INTEGER | 4 字节 |
+| 2 | BOOL | 1 字节（对齐到4字节） |
+| 3 | DOUBLE | 8 字节 |
+| 4 | VARCHAR(n) | n+1 字节（对齐到4字节） |
+| 5 | DATETIME | 16 字节 |
+
+### 7.3 `config/` — 存储引擎配置
 
 | 文件 | 职责 |
 |------|------|
 | `StorageEngineConfig` | 初始化全局路径常量，确保系统数据库目录存在 |
 | `StorageEngineProperties` | 绑定 `application.yml` 中的 `dbms.engine.*` 配置项 |
 
-### 7.2 `io/` — 二进制读写工具
+### 7.4 `io/` — 二进制读写工具
 
 | 文件 | 职责 |
 |------|------|
-| `BinaryIoUtils` | 提供 `readInt`、`writeInt`、`readString`、`writeString` 等二进制读写工具方法 |
+| `BinaryIoUtils` | 提供 `readInt`、`writeInt`、`readString`、`writeString`、`readDateTime`、`writeDateTime`、`writeFixedString`、`readFixedString` 等二进制读写工具方法 |
 
-### 7.3 `gateway/` — SPI 接口实现
+### 7.5 `gateway/` — SPI 接口实现
 
 | 实现类 | 实现的接口 | 主要文件结构 |
 |--------|-------------|--------------|
-| `NativeDatabaseSchemaGatewayImpl` | `DatabaseSchemaGateway` | `ruanko.db`（全局数据库注册表） |
-| `NativeTableGatewayImpl` | `TableGateway` | `{db}/{table}.tbl`（表结构）、`{db}/{table}.idx`（索引）、`{db}/{table}.cns`（约束） |
-| `NativeRecordGatewayImpl` | `RecordGateway` | `{db}/{table}.dat`（记录数据） |
+| `NativeDatabaseSchemaGatewayImpl` | `DatabaseSchemaGateway` | `ruanko.db`（全局数据库注册表）、`{db}/{db}.tb`（表清单）、`{db}/{db}.log`（操作日志） |
+| `NativeTableGatewayImpl` | `TableGateway` | `{db}/{table}.tdf`（表结构定义） |
+| `NativeRecordGatewayImpl` | `RecordGateway` | `{db}/{table}.trd`（记录数据） |
+
+**关键实现细节**：
+- **INSERT**：采用追加写入模式（`raf.seek(raf.length())`），每次都在文件末尾追加新记录
+- **SELECT**：全表扫描（Sequential Scan），按记录长度逐行读取
+- **UPDATE/DELETE**：定位到目标记录后进行原地覆盖
+- **所有定长写入都进行4字节对齐**，确保文件指针正确移动
 
 **一句话总结**：基础设施层负责所有技术细节：文件路径拼接、二进制格式读写、并发安全、异常处理等。
 
@@ -246,10 +298,40 @@ DTO 是前端请求体（`@RequestBody`）和后端应用层之间的桥梁。
 
 ## 8. 分层架构总结
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     HTTP Request/Response                    │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Controller 层（HTTP 路由）                  │
+│          接收请求 → 调用 ApplicationService → 返回响应         │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  Application 层（用例编排）                    │
+│         封装业务用例，编排多个 DomainService 和 Gateway        │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    Domain 层（业务规则）                       │
+│         定义业务规则和核心概念，通过 SPI 声明所需能力           │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            ▼ (SPI 接口)
+┌─────────────────────────────────────────────────────────────┐
+│              Infrastructure 层（技术实现）                     │
+│     实现 SPI 接口，提供原生二进制文件存储的具体实现             │
+└─────────────────────────────────────────────────────────────┘
+```
+
 1. **Controller 层**：只做 HTTP 路由和参数校验，不处理业务逻辑。
 2. **Application 层**：封装业务用例，编排领域服务，是业务流程的执行者。
 3. **Domain 层**：定义业务规则和核心概念，通过 SPI 声明所需能力。
-4. **Infrastructure 层**：实现 SPI 接口，提供具体技术实现（二进制文件存储）。
+4. **Infrastructure 层**：实现 SPI 接口，提供具体技术实现（原生二进制文件存储）。
 5. **SPI 接口**：是架构的核心解耦点，让领域层不依赖具体技术实现。
 
 **关键原则**：**依赖倒置**（DIP）。高层模块（Application、Domain）依赖抽象接口（SPI），低层模块（Infrastructure）实现这些接口。
@@ -278,17 +360,19 @@ dbms.engine.capabilities:
   schema: true     # 数据库管理
   table: true      # 表管理
   record: true     # 记录 CRUD
-  index: true      # 索引功能
-  constraint: true # 约束功能
-  transaction: true # 事务
-  security: true   # 安全控制
-  backup: true     # 备份恢复
+  index: false     # 索引功能（未实现）
+  constraint: false # 约束功能（未实现）
+  transaction: false # 事务（未实现）
+  security: false   # 安全控制（未实现）
+  backup: false     # 备份恢复（未实现）
 
 # 存储文件配置（验收要求 3.12.4）
 dbms.engine.storage:
-  system-schema-name: errDB       # 系统数据库（不可删除）
-  global-db-file-name: ruanko.db  # 全局数据库注册表
-  data-dir-name: data             # 数据库数据文件夹
+  system-schema-name: errDB           # 系统数据库名称（默认 errDB，不可删除）
+  global-db-file-name: ruanko.db      # 全局数据库注册表文件名
+  data-dir-name: data                 # 数据库数据文件夹名
+  dbms-root: ""                       # DBMS 根目录，空表示使用程序运行目录
+  auto-create-system-schema: true     # 是否自动创建系统数据库
 ```
 
 ---
@@ -314,13 +398,115 @@ dbms.engine.storage:
 
 ---
 
-## 12. 开发注意事项
+## 12. 测试SQL示例
 
-1. **命名规范**：数据库名、表名、字段名使用小写字母、数字、下划线，首字符必须是字母。
-2. **权限控制**：所有操作前都会通过 `EngineCapabilityPolicy` 检查对应功能是否开启。
-3. **异常处理**：业务异常用 `IllegalArgumentException`，持久化异常用 `DataAccessException`。
-4. **响应格式**：所有 Controller 方法都返回 `ApiResponse<T>`。
-5. **跨域配置**：默认允许 `http://localhost:5173`（前端开发服务器）。
+以下是完整的测试SQL语句，可用于验证各项功能：
+
+```sql
+-- =============================================
+-- 1. 数据库操作
+-- =============================================
+
+-- 创建数据库
+CREATE DATABASE test_db;
+
+-- 查看所有数据库
+SHOW DATABASES;
+
+-- =============================================
+-- 2. 表操作（在 test_db 中执行）
+-- =============================================
+
+-- 创建表（必须指定字段列表）
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    age INT,
+    email VARCHAR(100) UNIQUE
+);
+
+-- 查看当前数据库中的表
+SHOW TABLES;
+
+-- 查看表结构
+DESCRIBE users;
+
+-- =============================================
+-- 3. 数据操作
+-- =============================================
+
+-- 插入数据（注意：必须指定字段列表！）
+INSERT INTO users (id, name, age, email) VALUES (1, '张三', 25, 'zhangsan@example.com');
+INSERT INTO users (id, name, age, email) VALUES (2, '李四', 30, 'lisi@example.com');
+INSERT INTO users (id, name, age, email) VALUES (3, '王五', 28, 'wangwu@example.com');
+
+-- 查询所有数据
+SELECT * FROM users;
+
+-- 条件查询
+SELECT name, age FROM users WHERE age > 25;
+
+-- 排序查询
+SELECT * FROM users ORDER BY age DESC;
+
+-- 分页查询
+SELECT * FROM users LIMIT 2;
+
+-- 更新数据
+UPDATE users SET age = 26 WHERE id = 1;
+
+-- 删除数据
+DELETE FROM users WHERE id = 3;
+
+-- =============================================
+-- 4. 表结构修改
+-- =============================================
+
+-- 添加列
+ALTER TABLE users ADD COLUMN address VARCHAR(200);
+
+-- 修改列类型
+ALTER TABLE users MODIFY COLUMN age INT NOT NULL;
+
+-- 删除列
+ALTER TABLE users DROP COLUMN address;
+
+-- =============================================
+-- 5. 删除操作
+-- =============================================
+
+-- 删除表
+DROP TABLE users;
+
+-- 删除数据库
+DROP DATABASE test_db;
+```
+
+---
+
+## 13. 开发注意事项
+
+1. **命名规范**：数据库名、表名、字段名必须以字母开头，只能包含字母、数字和下划线，最长64位。例如：`test_db`、`user_list`。
+
+2. **INSERT 语句必须指定字段列表**：
+   ```sql
+   -- ✅ 正确
+   INSERT INTO users (id, name) VALUES (1, 'test');
+   
+   -- ❌ 错误：缺少字段列表
+   INSERT INTO users VALUES (1, 'test');
+   ```
+
+3. **权限控制**：所有操作前都会通过 `EngineCapabilityPolicy` 检查对应功能是否开启。
+
+4. **异常处理**：业务异常用 `IllegalArgumentException`，持久化异常会转换为 500 错误。
+
+5. **响应格式**：所有 Controller 方法都返回 `ApiResponse<T>`。
+
+6. **跨域配置**：默认允许 `http://localhost:5173`（前端开发服务器）。
+
+7. **数据存储位置**：所有数据文件存储在 `backend/data/` 目录下，该目录会在首次启动时自动创建。
 
 ---
 *文档维护人：DBMS 后端开发团队*
+*最后更新：2026-04-30*

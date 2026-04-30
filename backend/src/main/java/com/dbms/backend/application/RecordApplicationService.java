@@ -100,6 +100,12 @@ public class RecordApplicationService {
     public int delete(String databaseName, String tableName, Map<String, Object> filters) {
         domainService.validateDatabaseName(databaseName);
         domainService.validateIdentifier(tableName, "表名");
+        
+        // 安全防护：如果filters为空，不允许删除所有记录
+        if (filters == null || filters.isEmpty()) {
+            throw new IllegalArgumentException("删除操作必须指定过滤条件，不允许删除所有记录");
+        }
+        
         return recordGateway.delete(databaseName, tableName, filters);
     }
 }

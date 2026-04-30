@@ -102,8 +102,10 @@ public class RecordController {
     @DeleteMapping
     public ApiResponse<Map<String, Object>> delete(@PathVariable String databaseName,
                                                    @PathVariable String tableName,
-                                                   @RequestBody DeleteRecordRequest request) {
-        int affected = recordApplicationService.delete(databaseName, tableName, request.getFilters());
+                                                   @RequestBody(required = false) DeleteRecordRequest request) {
+        Map<String, Object> filters = (request != null && request.getFilters() != null) ? 
+                                      request.getFilters() : new HashMap<>();
+        int affected = recordApplicationService.delete(databaseName, tableName, filters);
         return ApiResponse.ok("删除成功", Map.of("affectedRows", affected));
     }
 }

@@ -103,21 +103,24 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                 Object val = values.get(meta.name);
                 long posBefore = raf.getFilePointer();
 
-                if (meta.type == 1) {
-                    int v = (val instanceof Number) ? ((Number) val).intValue() : 0;
+                if (meta.type == 1) { // INTEGER
+                    int v = convertToInt(val);
                     raf.writeInt(v);
-                } else if (meta.type == 2) {
-                    boolean v = (val instanceof Boolean) ? (Boolean) val : false;
+                } else if (meta.type == 2) { // BOOL
+                    boolean v = convertToBoolean(val);
                     raf.writeByte(v ? 1 : 0);
-                } else if (meta.type == 3) {
-                    double v = (val instanceof Number) ? ((Number) val).doubleValue() : 0.0;
+                } else if (meta.type == 3) { // DOUBLE
+                    double v = convertToDouble(val);
                     raf.writeDouble(v);
-                } else if (meta.type == 5) {
+                } else if (meta.type == 5) { // DATETIME
                     long v = (val instanceof Number) ? ((Number) val).longValue() : System.currentTimeMillis();
                     BinaryIoUtils.writeDateTime(raf, v);
+                } else if (meta.type == 4) { // VARCHAR
+                    String v = convertToString(val);
+                    BinaryIoUtils.writeFixedString(raf, v, meta.param + 1);
                 } else {
-                    // VARCHAR (type 4)
-                    String v = val != null ? String.valueOf(val) : "";
+                    // 未知类型处理
+                    String v = convertToString(val);
                     BinaryIoUtils.writeFixedString(raf, v, meta.param + 1);
                 }
 
@@ -141,8 +144,13 @@ public class NativeRecordGatewayImpl implements RecordGateway {
         if (!trdFile.exists()) return results;
 
         int recordLength = 4; // status flag header aligned to 4 bytes
-        for (FieldMeta m : metas) recordLength += m.length;
-
+        for (FieldMeta m : metas) {
+            recordLength += m.length;
+            int padding = (m.length % 4);
+            if (padding != 0) {
+                recordLength += (4 - padding);
+            }
+        }
         try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
             long totalBytes = raf.length();
             long pos = 0;
@@ -285,10 +293,48 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                 row.put(meta.name, raf.readDouble());
             } else if (meta.type == 5) {
                 row.put(meta.name, BinaryIoUtils.readDateTime(raf));
+            } else if (meta.type == 4) {
+                row.put(meta.name, BinaryIoUtils.readFixedString(raf, meta.param + 1));
             } else {
                 row.put(meta.name, BinaryIoUtils.readFixedString(raf, meta.param + 1));
             }
         }
         return row;
+    }
+    
+    // 新增类型转换方法
+    private int convertToInt(Object val) {
+        if (val instanceof Number) return ((Number) val).intValue();
+        if (val instanceof String) {
+            try {
+                return Integer.parseInt((String) val);
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+    
+    private boolean convertToBoolean(Object val) {
+        if (val instanceof Boolean) return (Boolean) val;
+        if (val instanceof String) return Boolean.parseBoolean((String) val);
+        if (val instanceof Number) return ((Number) val).intValue() != 0;
+        return false;
+    }
+    
+    private double convertToDouble(Object val) {
+        if (val instanceof Number) return ((Number) val).doubleValue();
+        if (val instanceof String) {
+            try {
+                return Double.parseDouble((String) val);
+            } catch (NumberFormatException e) {
+                return 0.0;
+            }
+        }
+        return 0.0;
+    }
+    
+    private String convertToString(Object val) {
+        return val != null ? String.valueOf(val) : "";
     }
 }
