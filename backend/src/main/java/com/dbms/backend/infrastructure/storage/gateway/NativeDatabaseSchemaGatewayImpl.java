@@ -11,17 +11,11 @@ import org.springframework.stereotype.Repository;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 中期方案：完全脱离 H2 JDBC 驱动的手写 Java 原生二进制 I/O 实现。
- * 满足文档 3.2.1, 3.2.2 与 3.12.4 要求 (ruanko.db 和 data/ 文件夹管理)
- * 
- * 系统库名称可通过 application.yml 配置：dbms.engine.storage.system-schema-name=errDB
+ * Binary storage implementation of database schema operations.
  */
 @Primary
 @Repository

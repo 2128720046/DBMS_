@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Map;
 
 /**
+ * SQL-only HTTP controller for executing SQL requests.
+ */
+/**
  * SQL 执行控制器，处理 SQL 语句执行的 HTTP 请求。
  * <p>
  * 提供 SQL 语句执行功能。允许跨域访问前端开发服务器（localhost:5173）。

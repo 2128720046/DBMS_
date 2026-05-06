@@ -6,6 +6,8 @@ server:
 spring:
   application:
     name: dbms-backend
+  profiles:
+    active: dev  # 默认使用开发环境配置，可以通过环境变量覆盖
 
 # DBMS 原生二进制存储引擎配置
 dbms:
@@ -31,7 +33,3 @@ dbms:
 logging:
   level:
     org.springframework.jdbc: DEBUG
-
-spring:
-  profiles:
-    active: dev  # 默认使用开发环境配置，可以通过环境变量覆盖

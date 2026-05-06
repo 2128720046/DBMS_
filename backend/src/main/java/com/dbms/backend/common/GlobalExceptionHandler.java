@@ -3,6 +3,9 @@ package com.dbms.backend.common;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+/**
+ * Global exception handler to map errors into ApiResponse.
+ */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 

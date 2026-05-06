@@ -6,6 +6,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * SPI for table lifecycle storage operations.
+ */
+/**
  * 表网关接口，定义数据表的创建、修改、删除和查询操作。
  * <p>
  * 作为领域层的 SPI (Service Provider Interface)，由基础设施层实现具体的存储逻辑。

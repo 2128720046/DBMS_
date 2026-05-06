@@ -4,6 +4,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
 /**
+ * Binds storage configuration from application.yml.
+ */
+/**
  * DBMS 存储引擎配置属性绑定类
  * 从 application.yml 读取 dbms.engine.storage.* 配置项
  */

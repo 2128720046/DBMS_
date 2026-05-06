@@ -3,6 +3,9 @@ package com.dbms.backend.infrastructure.storage.config;
 import java.io.File;
 
 /**
+ * Static storage engine path configuration.
+ */
+/**
  * DBMS 底层存储引擎配置常量
  * 
  * 配置说明：

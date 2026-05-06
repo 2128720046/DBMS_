@@ -7,6 +7,9 @@ import java.util.Locale;
 import java.util.Set;
 
 /**
+ * Capability gates and SQL allowlist checks.
+ */
+/**
  * 引擎能力策略，控制数据库引擎按模块是否可用。
  * <p>
  * 通过配置项动态管理 schema（数据库）、表、记录等能力是否启用，

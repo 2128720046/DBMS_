@@ -6,6 +6,9 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 /**
+ * Domain rules for database and identifier validation.
+ */
+/**
  * 数据库领域服务，负责数据库名和标识符的校验、规范化与引用。
  * <p>
  * 提供数据库名和标识符（表名、列名等）的合法性校验，

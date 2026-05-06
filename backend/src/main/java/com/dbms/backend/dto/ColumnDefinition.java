@@ -2,6 +2,9 @@ package com.dbms.backend.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+/**
+ * Column definition used by SQL DDL parsing and storage.
+ */
 @Schema(description = "表字段定义")
 public class ColumnDefinition {
 

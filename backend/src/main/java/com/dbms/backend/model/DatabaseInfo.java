@@ -1,6 +1,9 @@
 package com.dbms.backend.model;
 
 /**
+ * Simple database info model for SQL responses.
+ */
+/**
  * 数据库信息模型类，用于封装数据库的基本信息。
  * <p>
  * 主要用于在应用层和表示层之间传递数据库信息。

@@ -1,5 +1,8 @@
 package com.dbms.backend.common;
 
+/**
+ * API error codes for SQL-only responses.
+ */
 public enum ErrorCode {
     /**
      * 请求处理成功。

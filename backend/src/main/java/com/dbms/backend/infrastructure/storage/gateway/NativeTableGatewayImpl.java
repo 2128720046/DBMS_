@@ -17,6 +17,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * Binary storage implementation of table operations.
+ */
+/**
  * 中期方案：表与字段的原生二进制管理器。
  * 严格对应文档 3.3，3.4，3.12.5 (表名.tb) 和 3.12.6 (表名.tdf) 要求。
  */

@@ -8,6 +8,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * Application service for record CRUD operations.
+ */
+/**
  * 记录应用服务，提供对数据库表中记录的增、删、改、查操作。
  * <p>
  * 通过协调领域层服务（{@link DatabaseDomainService}）和

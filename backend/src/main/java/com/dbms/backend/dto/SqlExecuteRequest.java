@@ -2,6 +2,9 @@ package com.dbms.backend.dto;
 
 import io.swagger.v3.oas.annotations.media.Schema;
 
+/**
+ * SQL execution request payload.
+ */
 @Schema(description = "SQL 执行请求")
 public class SqlExecuteRequest {
 

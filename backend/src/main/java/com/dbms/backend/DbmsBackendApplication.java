@@ -4,6 +4,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
+ * Application entry point for the DBMS backend.
+ */
+/**
  * DBMS后端应用程序的入口类。
  * <p>
  * 使用Spring Boot框架启动整个后端服务，负责初始化所有Bean、

@@ -17,6 +17,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * Application service for table lifecycle and metadata operations.
+ */
+/**
  * 表应用服务，提供表的创建、结构修改、删除、列表查询和详情查看功能。
  * <p>
  * 负责协调领域层服务（{@link DatabaseDomainService}）和基础设施层网关（{@link TableGateway}）

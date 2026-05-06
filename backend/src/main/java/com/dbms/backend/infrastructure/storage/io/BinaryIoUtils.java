@@ -6,6 +6,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 /**
+ * Binary read/write helpers for fixed-length storage files.
+ */
+/**
  * DBMS 二进制底层读写工具类
  * 封装定长数据类型的写入与读取
  */

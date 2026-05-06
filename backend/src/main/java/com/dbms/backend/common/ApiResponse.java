@@ -1,5 +1,8 @@
 package com.dbms.backend.common;
 
+/**
+ * Standard API response wrapper used by SQL endpoints.
+ */
 public class ApiResponse<T> {
 
     /**

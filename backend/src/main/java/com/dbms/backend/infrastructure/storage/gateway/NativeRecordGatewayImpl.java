@@ -12,6 +12,9 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.*;
 
+/**
+ * Binary storage implementation of record CRUD operations.
+ */
 @Primary
 @Repository
 public class NativeRecordGatewayImpl implements RecordGateway {
