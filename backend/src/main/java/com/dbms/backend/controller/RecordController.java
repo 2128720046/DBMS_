@@ -6,6 +6,9 @@ import com.dbms.backend.dto.CreateRecordRequest;
 import com.dbms.backend.dto.DeleteRecordRequest;
 import com.dbms.backend.dto.QueryRecordRequest;
 import com.dbms.backend.dto.UpdateRecordRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +25,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/databases/{databaseName}/tables/{tableName}/records")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "Record", description = "记录管理")
 public class RecordController {
 
     private final RecordApplicationService recordApplicationService;
@@ -39,8 +43,9 @@ public class RecordController {
      * @return 协议分页结构，包含 total/page/size/list。
      */
     @PostMapping("/query")
-    public ApiResponse<Map<String, Object>> query(@PathVariable String databaseName,
-                                                  @PathVariable String tableName,
+    @Operation(summary = "条件查询记录", description = "根据过滤条件分页查询表记录。")
+    public ApiResponse<Map<String, Object>> query(@Parameter(description = "数据库名称") @PathVariable String databaseName,
+                                                  @Parameter(description = "数据表名称") @PathVariable String tableName,
                                                   @RequestBody(required = false) QueryRecordRequest request) {
         QueryRecordRequest safeRequest = request == null ? new QueryRecordRequest() : request;
         List<Map<String, Object>> result = recordApplicationService.query(
@@ -68,8 +73,9 @@ public class RecordController {
      * @return 协议结构：affectedRows。
      */
     @PostMapping
-    public ApiResponse<Map<String, Object>> insert(@PathVariable String databaseName,
-                                                   @PathVariable String tableName,
+    @Operation(summary = "插入记录", description = "插入单条或批量记录（当前仅写入第一条）。")
+    public ApiResponse<Map<String, Object>> insert(@Parameter(description = "数据库名称") @PathVariable String databaseName,
+                                                   @Parameter(description = "数据表名称") @PathVariable String tableName,
                                                    @RequestBody CreateRecordRequest request) {
         int affected = recordApplicationService.insert(databaseName, tableName, request.getValues());
         return ApiResponse.ok("插入成功", Map.of("affectedRows", affected));
@@ -84,8 +90,9 @@ public class RecordController {
      * @return 协议结构：affectedRows。
      */
     @PutMapping
-    public ApiResponse<Map<String, Object>> update(@PathVariable String databaseName,
-                                                   @PathVariable String tableName,
+    @Operation(summary = "更新记录", description = "根据过滤条件更新记录字段。")
+    public ApiResponse<Map<String, Object>> update(@Parameter(description = "数据库名称") @PathVariable String databaseName,
+                                                   @Parameter(description = "数据表名称") @PathVariable String tableName,
                                                    @RequestBody UpdateRecordRequest request) {
         int affected = recordApplicationService.update(databaseName, tableName, request.getFilters(), request.getValues());
         return ApiResponse.ok("更新成功", Map.of("affectedRows", affected));
@@ -100,8 +107,9 @@ public class RecordController {
      * @return 协议结构：affectedRows。
      */
     @DeleteMapping
-    public ApiResponse<Map<String, Object>> delete(@PathVariable String databaseName,
-                                                   @PathVariable String tableName,
+    @Operation(summary = "删除记录", description = "根据过滤条件或 ids 删除记录。")
+    public ApiResponse<Map<String, Object>> delete(@Parameter(description = "数据库名称") @PathVariable String databaseName,
+                                                   @Parameter(description = "数据表名称") @PathVariable String tableName,
                                                    @RequestBody(required = false) DeleteRecordRequest request) {
         Map<String, Object> filters = (request != null && request.getFilters() != null) ? 
                                       request.getFilters() : new HashMap<>();

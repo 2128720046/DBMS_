@@ -1,17 +1,21 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 import java.util.Map;
 
+@Schema(description = "新增记录请求")
 public class CreateRecordRequest {
 
     /**
      * 兼容旧字段：单条记录键值对。
      */
+    @Schema(description = "单条记录键值对")
     private Map<String, Object> values;
     /**
      * 对齐协议字段：支持批量 records。
      */
+    @Schema(description = "批量记录数组")
     private List<Map<String, Object>> records;
 
     /**

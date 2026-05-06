@@ -1,34 +1,42 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Schema(description = "查询记录请求")
 public class QueryRecordRequest {
 
     /**
      * 兼容旧字段：直接等值过滤。
      */
+    @Schema(description = "旧协议过滤条件")
     private Map<String, Object> filters;
     /**
      * 兼容旧字段：limit。
      */
+    @Schema(description = "旧协议查询条数", example = "50")
     private Integer limit = 50;
     /**
      * 兼容旧字段：offset。
      */
+    @Schema(description = "旧协议偏移量", example = "0")
     private Integer offset = 0;
     /**
      * 协议字段：页码，从 1 开始。
      */
+    @Schema(description = "页码，从 1 开始", example = "1")
     private Integer page = 1;
     /**
      * 协议字段：每页条数。
      */
+    @Schema(description = "每页条数", example = "50")
     private Integer size = 50;
     /**
      * 协议字段：条件列表。
      */
+    @Schema(description = "条件列表")
     private List<Condition> conditions;
 
     /**
@@ -138,9 +146,13 @@ public class QueryRecordRequest {
     /**
      * 条件对象，对齐协议 conditions[]。
      */
+    @Schema(description = "查询条件")
     public static class Condition {
+        @Schema(description = "字段名", example = "id")
         private String field;
+        @Schema(description = "操作符", example = "=")
         private String op;
+        @Schema(description = "条件值")
         private Object value;
 
         /**

@@ -1,24 +1,30 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.Map;
 
+@Schema(description = "更新记录请求")
 public class UpdateRecordRequest {
 
     /**
      * 兼容旧字段：过滤条件。
      */
+    @Schema(description = "旧协议过滤条件")
     private Map<String, Object> filters;
     /**
      * 兼容旧字段：更新值。
      */
+    @Schema(description = "旧协议更新值")
     private Map<String, Object> values;
     /**
      * 协议字段：where。
      */
+    @Schema(description = "过滤条件")
     private Map<String, Object> where;
     /**
      * 协议字段：updates。
      */
+    @Schema(description = "更新字段")
     private Map<String, Object> updates;
 
     /**

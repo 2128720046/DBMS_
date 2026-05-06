@@ -1,3 +1,5 @@
+# 全局配置文件，适用于所有环境
+
 server:
   port: 8080  
 
@@ -29,3 +31,7 @@ dbms:
 logging:
   level:
     org.springframework.jdbc: DEBUG
+
+spring:
+  profiles:
+    active: dev  # 默认使用开发环境配置，可以通过环境变量覆盖

@@ -3,6 +3,8 @@ package com.dbms.backend.controller;
 import com.dbms.backend.application.AuthApplicationService;
 import com.dbms.backend.common.ApiResponse;
 import com.dbms.backend.dto.LoginRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,6 +25,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/auth")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "Auth", description = "用户认证")
 public class AuthController {
 
     /** 认证应用服务，处理登录和注册业务逻辑 */
@@ -44,6 +47,7 @@ public class AuthController {
      * @return 包含 token、用户名和角色信息的成功响应
      */
     @PostMapping("/login")
+    @Operation(summary = "用户登录", description = "提交用户名与密码，返回 token 和用户信息。")
     public ApiResponse<Map<String, Object>> login(@RequestBody LoginRequest request) {
         return ApiResponse.ok("登录成功", authApplicationService.login(request.getUsername(), request.getPassword()));
     }
@@ -55,6 +59,7 @@ public class AuthController {
      * @return 注册成功的响应
      */
     @PostMapping("/register")
+    @Operation(summary = "用户注册", description = "提交用户名与密码，完成注册后返回成功提示。")
     public ApiResponse<Void> register(@RequestBody LoginRequest request) {
         authApplicationService.register(request.getUsername(), request.getPassword());
         return ApiResponse.ok("注册成功，请登录", null);

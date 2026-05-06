@@ -3,6 +3,8 @@ package com.dbms.backend.controller;
 import com.dbms.backend.application.SqlApplicationService;
 import com.dbms.backend.common.ApiResponse;
 import com.dbms.backend.dto.SqlExecuteRequest;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -22,6 +24,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/sql")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "SQL", description = "SQL 执行")
 public class SqlController {
 
     /** SQL 应用服务，处理 SQL 语句执行和语法转换逻辑 */
@@ -47,6 +50,7 @@ public class SqlController {
      * @return 执行结果，包含类型、状态、数据和影响行数等信息
      */
     @PostMapping("/execute")
+    @Operation(summary = "执行 SQL", description = "执行 SQL 语句并返回结果集或影响行数。")
     public ApiResponse<Map<String, Object>> execute(@RequestBody SqlExecuteRequest request) {
         return ApiResponse.ok("执行成功", sqlApplicationService.execute(request.getDatabaseName(), request.getSql()));
     }

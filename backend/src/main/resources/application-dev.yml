@@ -1,0 +1,8 @@
+# 开发环境配置
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui/index.html

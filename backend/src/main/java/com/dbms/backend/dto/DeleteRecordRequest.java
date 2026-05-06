@@ -1,18 +1,22 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Schema(description = "删除记录请求")
 public class DeleteRecordRequest {
 
     /**
      * 兼容旧字段：过滤条件。
      */
+    @Schema(description = "过滤条件")
     private Map<String, Object> filters;
     /**
      * 协议字段：ids 列表。
      */
+    @Schema(description = "主键 ID 列表")
     private List<Object> ids;
 
     /**

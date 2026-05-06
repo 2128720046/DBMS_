@@ -1,21 +1,27 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import java.util.List;
 
+@Schema(description = "创建或更新数据表请求")
 public class CreateTableRequest {
 
     /**
      * 兼容旧字段。
      */
+    @Schema(description = "旧协议表名", example = "users")
     private String tableName;
     /**
      * 对齐 REST 协议字段：name。
      */
+    @Schema(description = "表名", example = "users")
     private String name;
     /**
      * 表注释，当前版本用于展示，不参与 SQL 生成。
      */
+    @Schema(description = "表注释", example = "用户表")
     private String comment;
+    @Schema(description = "列定义列表")
     private List<ColumnDefinition> columns;
 
     /**

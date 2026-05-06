@@ -4,6 +4,9 @@ import com.dbms.backend.application.DatabaseApplicationService;
 import com.dbms.backend.common.ApiResponse;
 import com.dbms.backend.dto.CreateDatabaseRequest;
 import com.dbms.backend.model.DatabaseInfo;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -18,6 +21,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/databases")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "Database", description = "数据库管理")
 public class DatabaseController {
 
     private final DatabaseApplicationService applicationService;
@@ -33,6 +37,7 @@ public class DatabaseController {
      * @return 统一协议响应。
      */
     @PostMapping
+    @Operation(summary = "创建数据库", description = "创建新的数据库实例。")
     public ApiResponse<Void> createDatabase(@RequestBody CreateDatabaseRequest request) {
         applicationService.createDatabase(request.getDbName());
         return ApiResponse.ok("数据库创建成功", null);
@@ -44,6 +49,7 @@ public class DatabaseController {
      * @return 数据库名称集合，用于前端数据库下拉与列表展示。
      */
     @GetMapping
+    @Operation(summary = "查询数据库列表", description = "查询当前系统中已创建的数据库。")
     public ApiResponse<List<DatabaseInfo>> listDatabases() {
         return ApiResponse.ok("查询成功", applicationService.listDatabases());
     }
@@ -55,7 +61,8 @@ public class DatabaseController {
      * @return 统一协议响应。
      */
     @DeleteMapping("/{databaseName}")
-    public ApiResponse<Void> dropDatabase(@PathVariable String databaseName) {
+    @Operation(summary = "删除数据库", description = "删除指定名称的数据库。")
+    public ApiResponse<Void> dropDatabase(@Parameter(description = "数据库名称") @PathVariable String databaseName) {
         applicationService.dropDatabase(databaseName);
         return ApiResponse.ok("数据库删除成功", null);
     }

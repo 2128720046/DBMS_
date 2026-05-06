@@ -1,30 +1,39 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@Schema(description = "表字段定义")
 public class ColumnDefinition {
 
     /**
      * 字段名称。
      */
+    @Schema(description = "字段名称", example = "id")
     private String name;
     /**
      * 字段类型（如 INT、VARCHAR）。
      */
+    @Schema(description = "字段类型", example = "VARCHAR")
     private String type;
     /**
      * 是否允许空值（true 允许，false 不允许）。
      */
+    @Schema(description = "是否允许空值", example = "true")
     private Boolean nullable = true;
     /**
      * 协议扩展字段：是否主键。
      */
+    @Schema(description = "是否主键", example = "false")
     private Boolean pk = false;
     /**
      * 协议扩展字段：是否唯一。
      */
+    @Schema(description = "是否唯一", example = "false")
     private Boolean uq = false;
     /**
      * 协议扩展字段：长度。
      */
+    @Schema(description = "字段长度", example = "32")
     private Integer length;
 
     /**

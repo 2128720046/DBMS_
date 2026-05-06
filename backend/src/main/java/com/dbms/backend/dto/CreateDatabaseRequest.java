@@ -1,18 +1,24 @@
 package com.dbms.backend.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
+
+@Schema(description = "创建数据库请求")
 public class CreateDatabaseRequest {
 
     /**
      * 兼容旧字段：前端可能仍传 dbName。
      */
+    @Schema(description = "旧协议数据库名称", example = "test_db")
     private String dbName;
     /**
      * 对齐 REST 协议字段：name。
      */
+    @Schema(description = "数据库名称", example = "test_db")
     private String name;
     /**
      * 字符集字段，当前版本不参与建库执行，仅用于协议兼容。
      */
+    @Schema(description = "字符集", example = "utf8mb4")
     private String charset;
 
     /**

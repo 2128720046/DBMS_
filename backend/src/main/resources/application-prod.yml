@@ -1,0 +1,6 @@
+# 生产环境配置
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

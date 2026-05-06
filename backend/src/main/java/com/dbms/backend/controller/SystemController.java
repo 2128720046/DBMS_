@@ -1,6 +1,8 @@
 package com.dbms.backend.controller;
 
 import com.dbms.backend.common.ApiResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -21,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/system")
 @CrossOrigin(origins = "http://localhost:5173")
+@Tag(name = "System", description = "系统与健康检查")
 public class SystemController {
 
     /**
@@ -32,6 +35,7 @@ public class SystemController {
      * @return 包含状态、版本和运行时间的健康检查响应
      */
     @GetMapping("/health")
+    @Operation(summary = "健康检查", description = "返回服务状态、版本与运行时间。")
     public ApiResponse<Map<String, Object>> health() {
         long uptimeSeconds = ManagementFactory.getRuntimeMXBean().getUptime() / 1000;
         Map<String, Object> payload = Map.of(
