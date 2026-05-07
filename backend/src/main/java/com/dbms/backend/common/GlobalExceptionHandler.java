@@ -31,3 +31,5 @@ public class GlobalExceptionHandler {
         return ApiResponse.fail(ErrorCode.INTERNAL_ERROR, "系统内部错误: " + ex.getMessage());
     }
 }
+
+

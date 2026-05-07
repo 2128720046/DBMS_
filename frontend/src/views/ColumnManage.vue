@@ -224,7 +224,7 @@ const saveChanges = async () => {
                         name: col.name.trim(),
                         type: col.type,
                         length: col.length ? Number(col.length) : undefined,
-                        nullable: !col.pk && Boolean(col.nn),
+                        nullable: !Boolean(col.nn),
                         pk: Boolean(col.pk),
                         uq: Boolean(col.uq)
                     }))
