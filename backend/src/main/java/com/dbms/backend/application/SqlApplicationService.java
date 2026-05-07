@@ -11,17 +11,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Orchestrates SQL normalization, allowlist checks, parsing, and execution.
- */
-/**
- * SQL 执行应用服务，负责接收并执行用户提交的 SQL 语句。
- * <p>
- * 支持 MySQL 风格的 SQL 语法子集，
- * 直接路由到原生二进制存储引擎执行。
- * 返回结果分为"消息型"和"表格型"两种格式。
- * </p>
- *
- * @author DBMS Team
+ * SQL 执行入口编排器：负责 SQL 规范化、白名单校验并交给解析与执行层。
+ * 解析规则在 SqlParser，执行路由在 SqlExecutor。
  */
 @Service
 public class SqlApplicationService {

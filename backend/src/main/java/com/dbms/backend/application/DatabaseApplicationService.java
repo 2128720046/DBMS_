@@ -8,16 +8,7 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Application service for database lifecycle operations.
- */
-/**
- * 数据库应用服务，提供数据库的创建、删除和列表查询功能。
- * <p>
- * 作为应用层服务，协调领域层服务（{@link DatabaseDomainService}）和
- * 基础设施层网关（{@link DatabaseSchemaGateway}）完成数据库管理操作。
- * </p>
- *
- * @author DBMS Team
+ * 数据库用例服务：创建/删除/列出数据库，封装名称校验与网关调用。
  */
 @Service
 public class DatabaseApplicationService {

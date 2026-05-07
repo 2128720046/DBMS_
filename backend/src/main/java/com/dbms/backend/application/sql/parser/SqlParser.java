@@ -11,7 +11,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * SQL parser that converts normalized SQL into structured commands.
+ * SQL 解析器：把规范化后的 SQL 字符串解析成结构化命令。
  */
 @Component
 public class SqlParser {

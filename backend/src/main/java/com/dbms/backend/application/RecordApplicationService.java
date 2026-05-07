@@ -8,16 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Application service for record CRUD operations.
- */
-/**
- * 记录应用服务，提供对数据库表中记录的增、删、改、查操作。
- * <p>
- * 通过协调领域层服务（{@link DatabaseDomainService}）和
- * 基础设施层网关（{@link RecordGateway}）来完成数据记录的管理。
- * </p>
- *
- * @author DBMS Team
+ * 记录用例服务：记录的增删改查与安全校验（删除必须带条件）。
  */
 @Service
 public class RecordApplicationService {

@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Executes structured SQL commands by routing to application services.
+ * SQL 执行器：根据结构化命令路由到应用服务并组装返回结构。
  */
 @Component
 public class SqlExecutor {

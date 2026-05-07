@@ -6,7 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Structured SQL command model produced by the parser.
+ * SQL 结构化命令模型，承载解析后的语义数据。
  */
 public interface SqlCommand {
 
