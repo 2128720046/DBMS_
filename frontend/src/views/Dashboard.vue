@@ -62,7 +62,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getHealth } from '../api/http'
+import { listDatabases } from '../api/dbms'
 
 const router = useRouter()
 
@@ -80,10 +80,9 @@ const recentSql = ref([
 ])
 
 const checkHealth = async () => {
-  const res = await getHealth()
-  const status = res.data?.status || 'UNKNOWN'
-  const uptime = res.data?.uptime || 0
-  ElMessage.success(`后端状态: ${status}，运行时长: ${uptime}s`)
+  const res = await listDatabases()
+  const count = Array.isArray(res.data) ? res.data.length : 0
+  ElMessage.success(`SQL 服务正常，数据库数量: ${count}`)
 }
 </script>
 

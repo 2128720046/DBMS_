@@ -21,6 +21,7 @@ public class SqlApplicationService {
     private static final Set<String> ALLOWED_PREFIX = Set.of(
             "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE", "CALL",
             "CREATE SCHEMA", "DROP SCHEMA", "SET SCHEMA", "SHOW", "USE",
+            "DESCRIBE", "DESC",
             "BEGIN", "START TRANSACTION", "COMMIT", "ROLLBACK",
             "BACKUP", "RESTORE", "GRANT", "REVOKE", "CONNECT", "DISCONNECT", "REBUILD"
     );

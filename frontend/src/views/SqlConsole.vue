@@ -79,11 +79,18 @@ const sqlInputRef = ref()
 const executionResult = ref({ type: null, data: null, status: 'info', columns: [] })
 const history = ref([])
 
+const parseUseDatabase = (sqlText) => {
+  const match = String(sqlText || '').match(/^\s*USE\s+([\w"`\[\].-]+)\s*;?\s*$/i)
+  if (!match) return ''
+  const raw = match[1]
+  return raw.replace(/^["`\[]|["`\]]$/g, '')
+}
+
 onMounted(() => {
    if(route.query.db) {
       currentDb.value = route.query.db
       if (route.query.table) {
-        sqlCode.value = `SELECT * FROM ${route.query.db}.${route.query.table} LIMIT 50;\n`
+        sqlCode.value = `SELECT * FROM ${route.query.table} LIMIT 50;\n`
       }
    }
 })
@@ -158,6 +165,11 @@ const executeSql = async (mode = 'selected') => {
       data: payload.data || 'SQL 执行成功',
       status: payload.status || 'success',
       columns: payload.columns || []
+    }
+
+    const useDb = parseUseDatabase(targetSql)
+    if (useDb) {
+      currentDb.value = useDb
     }
 
     history.value.unshift({ time: timeStr, sql: targetSql.split('\n')[0], cost, status: 'success' })

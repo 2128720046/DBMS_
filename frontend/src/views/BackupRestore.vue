@@ -193,14 +193,8 @@ const submitBackup = async () => {
 
   creatingBackup.value = true
   try {
-    const response = await apiCreateBackup(selectedDatabase.value)
-    const item = response?.data || {}
-    tableData.value.unshift({
-      name: item.name,
-      size: '1 KB',
-      createTime: new Date().toLocaleString(),
-      desc: form.value.desc || '手动备份'
-    })
+    await apiCreateBackup(selectedDatabase.value)
+    await fetchBackups()
     dialogVisible.value = false
     ElMessage.success('备份已生成')
   } catch (error) {
