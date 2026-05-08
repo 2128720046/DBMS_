@@ -3,6 +3,7 @@ package com.dbms.backend.modules.record.infrastructure;
 import com.dbms.backend.modules.record.domain.RecordGateway;
 import com.dbms.backend.core.storage.config.StorageEngineConfig;
 import com.dbms.backend.core.storage.io.BinaryIoUtils;
+import com.dbms.backend.modules.integrity.domain.IntegrityGateway;
 
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Repository;
@@ -19,8 +20,17 @@ import java.util.*;
 @Repository
 public class NativeRecordGatewayImpl implements RecordGateway {
 
+    private final IntegrityGateway integrityGateway;
+
+    public NativeRecordGatewayImpl(IntegrityGateway integrityGateway) {
+        this.integrityGateway = integrityGateway;
+    }
+
     // 严苛地按照《验收要求》约定的160字节 FieldBlock
     private static final int FIELD_BLOCK_SIZE = 160;
+
+    // TableBlock: 128(name)+4(record_num)+4(field_num)+256*4+16+4 = 1180 bytes
+    private static final int TABLE_BLOCK_SIZE = 1180;
 
     /**
      * 内部类：缓存解析出的字段元数据。
@@ -89,6 +99,13 @@ public class NativeRecordGatewayImpl implements RecordGateway {
 
     @Override
     public int insert(String schemaName, String tableName, Map<String, Object> values) {
+        Map<String, Object> safeValues = values == null ? Map.of() : values;
+        List<Map<String, Object>> issues = integrityGateway.validateRow(schemaName, tableName, safeValues);
+        if (issues != null && !issues.isEmpty()) {
+            Map<String, Object> first = issues.get(0);
+            throw new IllegalArgumentException("违反完整性约束: " + first);
+        }
+
         // 先去磁盘读 .tdf 拿到各个列字节应占的大小，知道往这本字典里该怎么“断句”
         List<FieldMeta> metas = parseTdf(schemaName, tableName);
         String trdPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + tableName + ".trd";
@@ -103,7 +120,7 @@ public class NativeRecordGatewayImpl implements RecordGateway {
 
             // 按照列顺写入
             for (FieldMeta meta : metas) {
-                Object val = values.get(meta.name);
+                Object val = safeValues.get(meta.name);
                 long posBefore = raf.getFilePointer();
 
                 if (meta.type == 1) { // INTEGER
@@ -130,6 +147,7 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                 // 强制文件指针对齐 TDF 定义的 length (跳过 4 倍数对齐空白)
                 raf.seek(posBefore + meta.length);
             }
+            updateTableRecordCount(schemaName, tableName, 1);
             return 1;
         } catch (Exception e) {
             throw new RuntimeException("写入数据文件 (.trd) 失败: " + e.getMessage(), e);
@@ -148,11 +166,8 @@ public class NativeRecordGatewayImpl implements RecordGateway {
 
         int recordLength = 4; // status flag header aligned to 4 bytes
         for (FieldMeta m : metas) {
+            // meta.length 在 parseTdf 已经按 4 字节对齐
             recordLength += m.length;
-            int padding = (m.length % 4);
-            if (padding != 0) {
-                recordLength += (4 - padding);
-            }
         }
         try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
             long totalBytes = raf.length();
@@ -202,7 +217,7 @@ public class NativeRecordGatewayImpl implements RecordGateway {
         int recordLength = 4;
         for (FieldMeta m : metas) recordLength += m.length;
 
-        int updated = 0;
+        List<Long> targets = new ArrayList<>();
         try (RandomAccessFile raf = new RandomAccessFile(new File(trdPath), "rw")) {
             long pos = 0;
             while (pos < raf.length()) {
@@ -216,32 +231,65 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                             Object fv = e.getValue();
                             Object rv = row.get(e.getKey());
                             if (fv != null && !fv.toString().equals(String.valueOf(rv))) {
-                                match = false; break;
+                                match = false;
+                                break;
                             }
                         }
                     }
                     if (match) {
-                        // 回到这行的起点+4字节标志位，覆盖被 update 的列
-                        for (FieldMeta meta : metas) {
-                            if (values.containsKey(meta.name)) {
-                                raf.seek(pos + 4 + meta.offset);
-                                Object val = values.get(meta.name);
-                                if (meta.type == 1) raf.writeInt((val instanceof Number) ? ((Number) val).intValue() : 0);
-                                else if (meta.type == 2) raf.writeByte((boolean) val ? 1 : 0);
-                                else if (meta.type == 3) raf.writeDouble((val instanceof Number) ? ((Number) val).doubleValue() : 0.0);
-                                else if (meta.type == 5) BinaryIoUtils.writeDateTime(raf, (val instanceof Number) ? ((Number) val).longValue() : System.currentTimeMillis());
-                                else BinaryIoUtils.writeFixedString(raf, String.valueOf(val), meta.param + 1);
-                            }
+                        Map<String, Object> merged = new HashMap<>(row);
+                        if (values != null && !values.isEmpty()) {
+                            merged.putAll(values);
                         }
-                        updated++;
+                        merged.put("__dbms_ignoreOffset", pos);
+                        List<Map<String, Object>> issues = integrityGateway.validateRow(schemaName, tableName, merged);
+                        if (issues != null && !issues.isEmpty()) {
+                            Map<String, Object> first = issues.get(0);
+                            throw new IllegalArgumentException("违反完整性约束: " + first);
+                        }
+                        targets.add(pos);
                     }
                 }
                 pos += recordLength;
             }
+
+            // 二阶段：全部校验通过后再写入
+            if (targets.size() > 1 && values != null && !values.isEmpty()) {
+                // 若批量更新命中多行，并且要更新 unique/pk 列，直接拒绝，避免多行被写成同一个值。
+                List<Map<String, Object>> constraints = integrityGateway.listConstraints(schemaName, tableName);
+                for (Map<String, Object> c : constraints) {
+                    String type = String.valueOf(c.getOrDefault("type", "")).trim().toUpperCase().replace(' ', '_');
+                    String col = String.valueOf(c.getOrDefault("column", "")).trim();
+                    if (col.isBlank()) {
+                        continue;
+                    }
+                    if (("PRIMARY_KEY".equals(type) || "UNIQUE".equals(type)) && values.containsKey(col)) {
+                        throw new IllegalArgumentException("批量更新不允许同时修改 UNIQUE/PRIMARY KEY 字段: " + col);
+                    }
+                }
+            }
+
+            int updated = 0;
+            for (Long targetPos : targets) {
+                for (FieldMeta meta : metas) {
+                    if (values != null && values.containsKey(meta.name)) {
+                        raf.seek(targetPos + 4 + meta.offset);
+                        Object val = values.get(meta.name);
+                        if (meta.type == 1) raf.writeInt((val instanceof Number) ? ((Number) val).intValue() : convertToInt(val));
+                        else if (meta.type == 2) raf.writeByte(convertToBoolean(val) ? 1 : 0);
+                        else if (meta.type == 3) raf.writeDouble((val instanceof Number) ? ((Number) val).doubleValue() : convertToDouble(val));
+                        else if (meta.type == 5) BinaryIoUtils.writeDateTime(raf, (val instanceof Number) ? ((Number) val).longValue() : System.currentTimeMillis());
+                        else BinaryIoUtils.writeFixedString(raf, convertToString(val), meta.param + 1);
+                    }
+                }
+                updated++;
+            }
+            return updated;
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
-             throw new RuntimeException("更新失败 (.trd)", e);
+            throw new RuntimeException("更新失败 (.trd)", e);
         }
-        return updated;
     }
 
     @Override
@@ -281,7 +329,40 @@ public class NativeRecordGatewayImpl implements RecordGateway {
         } catch (Exception e) {
              throw new RuntimeException("删除失败 (.trd)", e);
         }
+        if (deleted > 0) {
+            updateTableRecordCount(schemaName, tableName, -deleted);
+        }
         return deleted;
+    }
+
+    private void updateTableRecordCount(String schemaName, String tableName, int delta) {
+        String tbPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + schemaName + ".tb";
+        File tbFile = new File(tbPath);
+        if (!tbFile.exists()) {
+            return;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(tbFile, "rw")) {
+            long length = raf.length();
+            long pos = 0;
+            while (pos + TABLE_BLOCK_SIZE <= length) {
+                raf.seek(pos);
+                String name = BinaryIoUtils.readFixedString(raf, 128);
+                if (!name.isEmpty() && name.equalsIgnoreCase(tableName)) {
+                    int current = raf.readInt();
+                    int next = Math.max(0, current + delta);
+                    raf.seek(pos + 128);
+                    raf.writeInt(next);
+
+                    // 同步更新 mtime（最后 4 字节）
+                    raf.seek(pos + (TABLE_BLOCK_SIZE - 4));
+                    raf.writeInt((int) (System.currentTimeMillis() / 1000));
+                    return;
+                }
+                pos += TABLE_BLOCK_SIZE;
+            }
+        } catch (IOException ignored) {
+            // 元数据更新失败不阻断主流程
+        }
     }
 
     private Map<String, Object> readRow(RandomAccessFile raf, List<FieldMeta> metas, long startPos) throws IOException {

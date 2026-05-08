@@ -33,9 +33,18 @@ public class IntegrityApplicationService {
      */
     public void addConstraint(String databaseName, String tableName, String constraintName,
                               String columnName, String type, String parameter) {
-        integrityGateway.saveConstraint(naming.normalizeDatabaseName(databaseName), naming.normalizeIdentifier(tableName),
-                naming.normalizeIdentifier(constraintName), columnName == null ? "" : naming.normalizeIdentifier(columnName),
-                type, parameter);
+        String normalizedDb = naming.normalizeDatabaseName(databaseName);
+        String normalizedTable = naming.normalizeIdentifier(tableName);
+        String normalizedConstraint = naming.normalizeIdentifier(constraintName);
+        String normalizedColumn = columnName == null || columnName.isBlank() ? "" : naming.normalizeIdentifier(columnName);
+
+        integrityGateway.saveConstraint(normalizedDb, normalizedTable, normalizedConstraint, normalizedColumn, type, parameter);
+
+        List<Map<String, Object>> issues = integrityGateway.validateTable(normalizedDb, normalizedTable);
+        if (issues != null && !issues.isEmpty()) {
+            integrityGateway.dropConstraint(normalizedDb, normalizedTable, normalizedConstraint);
+            throw new IllegalArgumentException("新增约束失败：现有数据违反该约束。问题示例: " + issues.get(0));
+        }
     }
 
     /**

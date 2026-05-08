@@ -145,7 +145,30 @@ public class SqlExecutor {
             return buildMessagePayload("表结构更新成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.Insert insert) {
-            int affected = recordApplicationService.insert(normalizedDb, insert.tableName(), insert.values());
+            Map<String, Object> values = new LinkedHashMap<>();
+            List<String> columns = insert.columns();
+            List<Object> rawValues = insert.values();
+            if (columns == null || columns.isEmpty()) {
+                List<String> ordered = readColumnOrder(normalizedDb, insert.tableName());
+                if (ordered.isEmpty()) {
+                    throw new IllegalArgumentException("无法获取表字段顺序，INSERT 失败");
+                }
+                if (rawValues.size() != ordered.size()) {
+                    throw new IllegalArgumentException("INSERT INTO VALUES 值数量与表字段数不匹配");
+                }
+                for (int i = 0; i < ordered.size(); i++) {
+                    values.put(ordered.get(i), rawValues.get(i));
+                }
+            } else {
+                if (rawValues.size() != columns.size()) {
+                    throw new IllegalArgumentException("INSERT INTO 字段和值数量不匹配");
+                }
+                for (int i = 0; i < columns.size(); i++) {
+                    values.put(columns.get(i), rawValues.get(i));
+                }
+            }
+
+            int affected = recordApplicationService.insert(normalizedDb, insert.tableName(), values);
             return buildMessagePayload("插入成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Select select) {

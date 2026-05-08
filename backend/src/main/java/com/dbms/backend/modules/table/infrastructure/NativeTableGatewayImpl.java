@@ -39,6 +39,9 @@ public class NativeTableGatewayImpl implements TableGateway {
     // 按 4 字节对齐补齐到 904 bytes
     private static final int TID_BLOCK_SIZE = 904;
 
+    // trd 每行记录头部：4 bytes status(int)
+    private static final int TRD_ROW_HEADER_SIZE = 4;
+
     @Override
     public void createTable(String schemaName, String tableName, List<ColumnDefinition> columns) {
         // 第一步：构建文件夹和文件物理路径的检查，没有库就不让建表
@@ -47,6 +50,7 @@ public class NativeTableGatewayImpl implements TableGateway {
         if (!dbDir.exists()) throw new IllegalArgumentException("当前数据库不存在：" + schemaName);
 
         String tbFilePath = dbPath + File.separator + schemaName + ".tb";
+        assertTableNotExists(tbFilePath, tableName);
         File logFile = new File(dbPath, schemaName + ".log");
         
         // 约定俗成的物理文件体系（系统验收要求 3.12.3 强制要求存在）
@@ -88,8 +92,11 @@ public class NativeTableGatewayImpl implements TableGateway {
                 
                 BinaryIoUtils.writeDateTime(tdfRaf, System.currentTimeMillis()); // mtime
                 
-                // 完整性暂时写入 1 (例如为主键) 或 0
-                int integrity = (col.getPk() != null && col.getPk()) ? 1 : 0;
+                // bit0 = NOT NULL, bit1 = PK, bit2 = UNIQUE
+                int integrity = 0;
+                if (col.getNullable() != null && !col.getNullable()) integrity |= 1;
+                if (col.getPk() != null && col.getPk()) integrity |= 2;
+                if (col.getUq() != null && col.getUq()) integrity |= 4;
                 tdfRaf.writeInt(integrity);                               // integrities
             }
         } catch (Exception e) {
@@ -177,15 +184,29 @@ public class NativeTableGatewayImpl implements TableGateway {
 
     @Override
     public void alterTableStructure(String schemaName, String tableName, List<ColumnDefinition> columns) {
-        // 重写 .tdf 文件实现表结构变更
+        // 重写 .tdf 文件实现表结构变更，同时尽可能迁移已有 .trd 数据，避免结构变更后读取错位
         String dbPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName;
         String tdfPath = dbPath + File.separator + tableName + ".tdf";
         File tdfFile = new File(tdfPath);
+        String trdPath = dbPath + File.separator + tableName + ".trd";
+        File trdFile = new File(trdPath);
         
         if (!tdfFile.exists()) {
             throw new IllegalArgumentException("表定义文件不存在：" + tdfPath);
         }
         
+        List<FieldMeta> oldMetas = null;
+        List<Map<String, Object>> existingRows = List.of();
+        try {
+            if (trdFile.exists() && trdFile.length() > 0) {
+                oldMetas = parseTdfMeta(tdfFile);
+                existingRows = readAllActiveRows(trdFile, oldMetas);
+            }
+        } catch (Exception ignored) {
+            oldMetas = null;
+            existingRows = List.of();
+        }
+
         try (RandomAccessFile tdfRaf = new RandomAccessFile(tdfFile, "rw")) {
             tdfRaf.setLength(0); // 清空文件
             
@@ -203,12 +224,245 @@ public class NativeTableGatewayImpl implements TableGateway {
                 BinaryIoUtils.writeDateTime(tdfRaf, System.currentTimeMillis()); // mtime
                 
                 int integrity = 0;
-                if (col.getPk() != null && col.getPk()) integrity |= 2;   // bit1 = PK
                 if (col.getNullable() != null && !col.getNullable()) integrity |= 1; // bit0 = NOT NULL
+                if (col.getPk() != null && col.getPk()) integrity |= 2;             // bit1 = PK
+                if (col.getUq() != null && col.getUq()) integrity |= 4;             // bit2 = UNIQUE
                 tdfRaf.writeInt(integrity);                               // integrities
             }
         } catch (IOException e) {
             throw new RuntimeException("更新表定义文件(.tdf)失败：" + e.getMessage(), e);
+        }
+
+        // 迁移已有数据：将旧行映射到新字段集合，写回 .trd
+        if (existingRows != null && !existingRows.isEmpty()) {
+            try {
+                List<FieldMeta> newMetas = parseTdfMeta(tdfFile);
+                int migrated = rewriteTrd(trdFile, existingRows, newMetas);
+                updateTableMetadata(schemaName, tableName, columns.size(), migrated);
+            } catch (Exception e) {
+                throw new RuntimeException("表结构更新后数据迁移失败：" + e.getMessage(), e);
+            }
+        } else {
+            updateTableMetadata(schemaName, tableName, columns.size(), null);
+        }
+    }
+
+    private void assertTableNotExists(String tbFilePath, String tableName) {
+        File tbFile = new File(tbFilePath);
+        if (!tbFile.exists()) {
+            throw new IllegalArgumentException("表描述文件不存在：" + tbFilePath);
+        }
+        try (RandomAccessFile tbRaf = new RandomAccessFile(tbFile, "r")) {
+            long length = tbRaf.length();
+            long pos = 0;
+            while (pos + TABLE_BLOCK_SIZE <= length) {
+                tbRaf.seek(pos);
+                String name = BinaryIoUtils.readFixedString(tbRaf, 128);
+                if (!name.isEmpty() && name.equalsIgnoreCase(tableName)) {
+                    throw new IllegalArgumentException("表已存在：" + tableName);
+                }
+                pos += TABLE_BLOCK_SIZE;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("读取表描述失败：" + e.getMessage(), e);
+        }
+    }
+
+    private void updateTableMetadata(String schemaName, String tableName, int fieldCount, Integer recordCountOrNull) {
+        String tbFilePath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + schemaName + ".tb";
+        File tbFile = new File(tbFilePath);
+        if (!tbFile.exists()) {
+            return;
+        }
+        try (RandomAccessFile tbRaf = new RandomAccessFile(tbFile, "rw")) {
+            long length = tbRaf.length();
+            long pos = 0;
+            while (pos + TABLE_BLOCK_SIZE <= length) {
+                tbRaf.seek(pos);
+                String name = BinaryIoUtils.readFixedString(tbRaf, 128);
+                if (!name.isEmpty() && name.equalsIgnoreCase(tableName)) {
+                    // record_num 在 pos+128
+                    if (recordCountOrNull != null) {
+                        tbRaf.seek(pos + 128);
+                        tbRaf.writeInt(Math.max(0, recordCountOrNull));
+                    }
+                    // field_num 在 pos+132
+                    tbRaf.seek(pos + 128 + 4);
+                    tbRaf.writeInt(fieldCount);
+
+                    // mtime 在最后 4 bytes
+                    tbRaf.seek(pos + (TABLE_BLOCK_SIZE - 4));
+                    tbRaf.writeInt((int) (System.currentTimeMillis() / 1000));
+                    return;
+                }
+                pos += TABLE_BLOCK_SIZE;
+            }
+        } catch (IOException ignored) {
+            // 元数据更新失败不阻断主流程
+        }
+    }
+
+    private static class FieldMeta {
+        String name;
+        int type;   // 1=INT, 2=BOOL, 3=DOUBLE, 4=VARCHAR, 5=DATETIME
+        int param;
+        int length; // padded to multiple of 4
+        int offset; // relative to row payload start (after status int)
+    }
+
+    private List<FieldMeta> parseTdfMeta(File tdfFile) throws IOException {
+        List<FieldMeta> metas = new ArrayList<>();
+        try (RandomAccessFile raf = new RandomAccessFile(tdfFile, "r")) {
+            long fileLength = raf.length();
+            long pos = 0;
+            int currentOffset = 0;
+            while (pos + FIELD_BLOCK_SIZE <= fileLength) {
+                raf.seek(pos);
+                raf.readInt();
+                String name = BinaryIoUtils.readFixedString(raf, 128);
+                int type = raf.readInt();
+                int param = raf.readInt();
+                // skip mtime 16 + integrities 4
+
+                FieldMeta meta = new FieldMeta();
+                meta.name = name;
+                meta.type = type;
+                meta.param = param;
+                meta.offset = currentOffset;
+
+                int length;
+                switch (type) {
+                    case 1: length = 4; break;
+                    case 2: length = 1; break;
+                    case 3: length = 8; break;
+                    case 5: length = 16; break;
+                    case 4: default: length = param + 1; break;
+                }
+                int padding = length % 4;
+                if (padding != 0) {
+                    length += (4 - padding);
+                }
+                meta.length = length;
+                currentOffset += length;
+
+                metas.add(meta);
+                pos += FIELD_BLOCK_SIZE;
+            }
+        }
+        return metas;
+    }
+
+    private List<Map<String, Object>> readAllActiveRows(File trdFile, List<FieldMeta> metas) throws IOException {
+        if (metas == null || metas.isEmpty()) {
+            return List.of();
+        }
+        int recordLength = TRD_ROW_HEADER_SIZE;
+        for (FieldMeta m : metas) {
+            recordLength += m.length;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
+            long fileLength = raf.length();
+            long pos = 0;
+            while (pos + recordLength <= fileLength) {
+                raf.seek(pos);
+                int status = raf.readInt();
+                if (status == 1) {
+                    Map<String, Object> row = new HashMap<>();
+                    long payloadStart = pos + TRD_ROW_HEADER_SIZE;
+                    for (FieldMeta meta : metas) {
+                        raf.seek(payloadStart + meta.offset);
+                        row.put(meta.name, readValue(raf, meta));
+                    }
+                    rows.add(row);
+                }
+                pos += recordLength;
+            }
+        }
+        return rows;
+    }
+
+    private Object readValue(RandomAccessFile raf, FieldMeta meta) throws IOException {
+        switch (meta.type) {
+            case 1:
+                return raf.readInt();
+            case 2:
+                return raf.readByte() != 0;
+            case 3:
+                return raf.readDouble();
+            case 5:
+                return BinaryIoUtils.readDateTime(raf);
+            case 4:
+            default:
+                return BinaryIoUtils.readFixedString(raf, meta.param + 1);
+        }
+    }
+
+    private int rewriteTrd(File trdFile, List<Map<String, Object>> rows, List<FieldMeta> metas) throws IOException {
+        File tmp = new File(trdFile.getAbsolutePath() + ".tmp");
+        int written = 0;
+        try (RandomAccessFile raf = new RandomAccessFile(tmp, "rw")) {
+            raf.setLength(0);
+            for (Map<String, Object> row : rows) {
+                raf.seek(raf.length());
+                raf.writeInt(1);
+                for (FieldMeta meta : metas) {
+                    Object val = row.get(meta.name);
+                    long posBefore = raf.getFilePointer();
+                    writeValue(raf, meta, val);
+                    raf.seek(posBefore + meta.length);
+                }
+                written++;
+            }
+        }
+
+        // 覆盖替换（Windows 下 renameTo 可能失败，使用 NIO move 更稳）
+        java.nio.file.Files.move(tmp.toPath(), trdFile.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        return written;
+    }
+
+    private void writeValue(RandomAccessFile raf, FieldMeta meta, Object val) throws IOException {
+        switch (meta.type) {
+            case 1: {
+                int v = 0;
+                if (val instanceof Number n) v = n.intValue();
+                else if (val instanceof String s) {
+                    try { v = Integer.parseInt(s.trim()); } catch (Exception ignored) {}
+                }
+                raf.writeInt(v);
+                return;
+            }
+            case 2: {
+                boolean v = false;
+                if (val instanceof Boolean b) v = b;
+                else if (val instanceof Number n) v = n.intValue() != 0;
+                else if (val instanceof String s) v = Boolean.parseBoolean(s.trim());
+                raf.writeByte(v ? 1 : 0);
+                return;
+            }
+            case 3: {
+                double v = 0.0;
+                if (val instanceof Number n) v = n.doubleValue();
+                else if (val instanceof String s) {
+                    try { v = Double.parseDouble(s.trim()); } catch (Exception ignored) {}
+                }
+                raf.writeDouble(v);
+                return;
+            }
+            case 5: {
+                long v = System.currentTimeMillis();
+                if (val instanceof Number n) v = n.longValue();
+                else if (val instanceof String s) {
+                    try { v = Long.parseLong(s.trim()); } catch (Exception ignored) {}
+                }
+                BinaryIoUtils.writeDateTime(raf, v);
+                return;
+            }
+            case 4:
+            default: {
+                String v = val == null ? "" : String.valueOf(val);
+                BinaryIoUtils.writeFixedString(raf, v, meta.param + 1);
+            }
         }
     }
 

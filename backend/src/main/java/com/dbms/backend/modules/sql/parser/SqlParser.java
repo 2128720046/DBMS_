@@ -66,7 +66,7 @@ public class SqlParser {
         }
         if (upper.startsWith("INSERT INTO")) {
             InsertParts parts = parseInsert(normalizedSql);
-            return new SqlCommand.Insert(parts.tableName, parts.values);
+            return new SqlCommand.Insert(parts.tableName, parts.columns, parts.values);
         }
         if (upper.startsWith("SELECT")) {
             SelectParts parts = parseSelect(normalizedSql);
@@ -276,37 +276,45 @@ public class SqlParser {
         String upper = sql.toUpperCase(Locale.ROOT);
         int intoIndex = upper.indexOf("INSERT INTO") + "INSERT INTO".length();
         String rest = sql.substring(intoIndex).trim();
-        String tableName = extractIdentifierToken(rest);
-        tableName = domainService.normalizeIdentifier(tableName);
 
-        if (rest.indexOf('(') == -1) {
-            throw new IllegalArgumentException("INSERT INTO 需要字段列表");
+        String rawTableToken = extractIdentifierToken(rest);
+        String tableName = domainService.normalizeIdentifier(rawTableToken);
+        int tableTokenIndex = rest.toUpperCase(Locale.ROOT).indexOf(rawTableToken.toUpperCase(Locale.ROOT));
+        if (tableTokenIndex == -1) {
+            throw new IllegalArgumentException("INSERT INTO 表名解析失败");
         }
-        int columnsStart = rest.indexOf('(');
-        int columnsEnd = findMatchingParen(rest, columnsStart);
-        String columnsPart = rest.substring(columnsStart + 1, columnsEnd).trim();
-        List<String> columns = splitTopLevel(columnsPart, ',');
+        String afterTable = rest.substring(tableTokenIndex + rawTableToken.length()).trim();
 
         int valuesIndex = upper.indexOf("VALUES", intoIndex);
         if (valuesIndex == -1) {
             throw new IllegalArgumentException("INSERT INTO 缺少 VALUES");
         }
+
+        List<String> columns = null;
+        if (!afterTable.isEmpty() && afterTable.charAt(0) == '(') {
+            int columnsStart = rest.indexOf('(');
+            int columnsEnd = findMatchingParen(rest, columnsStart);
+            String columnsPart = rest.substring(columnsStart + 1, columnsEnd).trim();
+            columns = new ArrayList<>();
+            for (String item : splitTopLevel(columnsPart, ',')) {
+                columns.add(domainService.normalizeIdentifier(stripIdentifierQuotes(item.trim())));
+            }
+        }
+
         String valuesRest = sql.substring(valuesIndex + "VALUES".length()).trim();
         int valuesStart = valuesRest.indexOf('(');
         int valuesEnd = findMatchingParen(valuesRest, valuesStart);
         String valuesPart = valuesRest.substring(valuesStart + 1, valuesEnd).trim();
-        List<String> values = splitTopLevel(valuesPart, ',');
 
-        if (columns.size() != values.size()) {
+        List<Object> parsedValues = new ArrayList<>();
+        for (String item : splitTopLevel(valuesPart, ',')) {
+            parsedValues.add(parseLiteral(item.trim()));
+        }
+
+        if (columns != null && columns.size() != parsedValues.size()) {
             throw new IllegalArgumentException("INSERT INTO 字段和值数量不匹配");
         }
-
-        Map<String, Object> map = new LinkedHashMap<>();
-        for (int i = 0; i < columns.size(); i++) {
-            String column = domainService.normalizeIdentifier(stripIdentifierQuotes(columns.get(i).trim()));
-            map.put(column, parseLiteral(values.get(i).trim()));
-        }
-        return new InsertParts(tableName, map);
+        return new InsertParts(tableName, columns, parsedValues);
     }
 
     private SelectParts parseSelect(String sql) {
@@ -840,7 +848,7 @@ public class SqlParser {
 
     private record CreateTableParts(String tableName, List<ColumnDefinition> columns) {}
 
-    private record InsertParts(String tableName, Map<String, Object> values) {}
+    private record InsertParts(String tableName, List<String> columns, List<Object> values) {}
 
     private record SelectParts(String tableName, List<String> projection, SqlCommand.FilterExpression filters,
                                List<SqlCommand.OrderBy> orderBy, SqlCommand.Limit limit) {}

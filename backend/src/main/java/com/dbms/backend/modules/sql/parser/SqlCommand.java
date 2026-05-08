@@ -30,7 +30,14 @@ public interface SqlCommand {
 
     record ReplaceColumns(String tableName, List<ColumnDefinition> columns) implements SqlCommand {}
 
-    record Insert(String tableName, Map<String, Object> values) implements SqlCommand {}
+    /**
+     * INSERT 命令。
+     * <p>
+     * columns 为空表示未显式指定字段列表（即 INSERT INTO t VALUES (...)），
+     * 此时执行器需要按表结构字段顺序进行映射。
+     * </p>
+     */
+    record Insert(String tableName, List<String> columns, List<Object> values) implements SqlCommand {}
 
     record Select(String tableName, List<String> projection, FilterExpression filters, List<OrderBy> orderBy, Limit limit)
             implements SqlCommand {}
