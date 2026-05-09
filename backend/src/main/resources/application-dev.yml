@@ -6,3 +6,5 @@ springdoc:
   swagger-ui:
     enabled: true
     path: /swagger-ui/index.html
+
+# http://localhost:8080/swagger-ui/index.html

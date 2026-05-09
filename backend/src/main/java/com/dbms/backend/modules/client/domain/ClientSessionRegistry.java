@@ -17,9 +17,11 @@ public interface ClientSessionRegistry {
      *
      * @param clientId     客户端 ID
      * @param username     登录用户名
+     * @param ipAddress    客户端 IP 地址
+     * @param port         客户端端口
      * @param connectedAt  连接建立时间
      */
-    void register(String clientId, String username, Instant connectedAt);
+    void register(String clientId, String username, String ipAddress, Integer port, Instant connectedAt);
 
     /**
      * 修改会话当前使用的数据库。
@@ -42,4 +44,11 @@ public interface ClientSessionRegistry {
      * @return 在线客户端 ID 列表
      */
     List<String> listOnlineClients();
+
+    /**
+     * 列出当前在线客户端的完整信息。
+     *
+     * @return 在线客户端详情列表
+     */
+    List<SessionInfo> listOnlineClientDetails();
 }

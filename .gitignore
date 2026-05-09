@@ -48,3 +48,6 @@ Thumbs.db
 
 # 数据库文件
 backend/data/
+
+# 其他不需要版本控制的文件
+backend\data
