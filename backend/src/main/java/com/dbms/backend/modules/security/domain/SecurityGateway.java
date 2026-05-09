@@ -29,12 +29,45 @@ public interface SecurityGateway {
     void register(String username, String password);
 
     /**
+     * 删除用户。
+     *
+     * @param username 要删除的用户名
+     */
+    void dropUser(String username);
+
+    /**
+     * 修改用户密码。
+     *
+     * @param username   用户名
+     * @param newPassword 新密码
+     */
+    void alterUser(String username, String newPassword);
+
+    /**
+     * 授予用户对指定对象的权限。
+     *
+     * @param username   用户名
+     * @param privilege  权限类型（SELECT、INSERT、UPDATE、DELETE、CREATE、DROP、ALTER、INDEX、BACKUP、RESTORE、ALL PRIVILEGES）
+     * @param objectName 权限作用对象，格式为 database.table 或 database.*
+     */
+    void grant(String username, String privilege, String objectName);
+
+    /**
+     * 撤销用户对指定对象的权限。
+     *
+     * @param username   用户名
+     * @param privilege  权限类型
+     * @param objectName 权限作用对象
+     */
+    void revoke(String username, String privilege, String objectName);
+
+    /**
      * 查询用户在指定数据库和对象上的权限集合。
      *
      * @param username   用户名
-     * @param schemaName 数据库名称
-     * @param objectName 表名、索引名或其他对象名
-     * @return 权限集合，如 SELECT、INSERT、DDL、ADMIN
+     * @param schemaName 数据库名称，使用 "*" 表示所有库
+     * @param objectName 表名、索引名或其他对象名，使用 "*" 表示所有对象
+     * @return 权限集合，条目格式为 "privilege_type ON object_name"
      */
     Set<String> permissionsOf(String username, String schemaName, String objectName);
 
