@@ -91,7 +91,7 @@ public interface SqlCommand {
 
     record Connect(String serverAddress, Integer port, String username, String password) implements SqlCommand {}
 
-    record Disconnect() implements SqlCommand {}
+    record Disconnect(String clientId) implements SqlCommand {}
 
     record ShowClients() implements SqlCommand {}
 

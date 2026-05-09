@@ -38,6 +38,9 @@ public class SqlExecutor {
     private final SecurityApplicationService securityApplicationService;
     private final ClientApplicationService clientApplicationService;
 
+    // Tracks the most recent transaction id for COMMIT/ROLLBACK.
+    private String currentTransactionId;
+
     public SqlExecutor(DatabaseDomainService domainService,
                        DatabaseApplicationService databaseApplicationService,
                        TableApplicationService tableApplicationService,
@@ -79,6 +82,22 @@ public class SqlExecutor {
             securityApplicationService.register(createUser.username(), createUser.password());
             return buildMessagePayload("用户创建成功", 1, normalizedSql);
         }
+        if (command instanceof SqlCommand.DropUser dropUser) {
+            securityApplicationService.dropUser(dropUser.username());
+            return buildMessagePayload("用户删除成功", 1, normalizedSql);
+        }
+        if (command instanceof SqlCommand.AlterUser alterUser) {
+            securityApplicationService.alterUser(alterUser.username(), alterUser.password());
+            return buildMessagePayload("用户修改成功", 1, normalizedSql);
+        }
+        if (command instanceof SqlCommand.GrantPrivilege grant) {
+            securityApplicationService.grant(grant.username(), grant.privilege(), grant.objectName());
+            return buildMessagePayload("权限授予成功", 1, normalizedSql);
+        }
+        if (command instanceof SqlCommand.RevokePrivilege revoke) {
+            securityApplicationService.revoke(revoke.username(), revoke.privilege(), revoke.objectName());
+            return buildMessagePayload("权限撤销成功", 1, normalizedSql);
+        }
         if (command instanceof SqlCommand.Connect connect) {
             Map<String, Object> user = securityApplicationService.login(connect.username(), connect.password());
             String clientId = clientApplicationService.connect(connect.username());
@@ -93,28 +112,24 @@ public class SqlExecutor {
             payload.put("refreshTree", false);
             return payload;
         }
-        if (command instanceof SqlCommand.Disconnect) {
+        if (command instanceof SqlCommand.Disconnect disconnect) {
+            String clientId = disconnect.clientId();
+            if (clientId != null && !clientId.isEmpty()) {
+                clientApplicationService.disconnect(clientId);
+            }
             return buildMessagePayload("连接已断开", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.ShowClients) {
-            List<Map<String, Object>> rows = clientApplicationService.listOnlineClients().stream()
-                    .map(id -> {
-                        Map<String, Object> row = new LinkedHashMap<>();
-                        row.put("CLIENT_ID", id);
-                        return row;
-                    })
-                    .toList();
-            return buildTablePayloadFromRows(rows, List.of("CLIENT_ID"));
+            List<Map<String, Object>> rows = clientApplicationService.listOnlineClientDetails();
+            return buildTablePayloadFromRows(rows, List.of(
+                    "CLIENT_ID", "USER", "IP_ADDRESS", "PORT", "CONNECTED_AT", "CURRENT_DATABASE"
+            ));
         }
         if (command instanceof SqlCommand.ShowGrants showGrants) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("USER", showGrants.username());
             row.put("GRANTS", securityApplicationService.permissionsOf(showGrants.username(), "*", "*"));
             return buildTablePayloadFromRows(List.of(row), List.of("USER", "GRANTS"));
-        }
-        if (command instanceof SqlCommand.GrantPrivilege || command instanceof SqlCommand.RevokePrivilege
-                || command instanceof SqlCommand.DropUser || command instanceof SqlCommand.AlterUser) {
-            return buildMessagePayload("安全管理命令已进入占位流程，具体持久化逻辑待实现", 0, normalizedSql);
         }
 
         String normalizedDb = requireDatabase(databaseName);
@@ -237,15 +252,17 @@ public class SqlExecutor {
         }
 
         if (command instanceof SqlCommand.BeginTransaction) {
-            String txId = transactionApplicationService.begin(normalizedDb);
-            return buildMessagePayload("事务已开启: " + txId, 0, normalizedSql);
+            currentTransactionId = transactionApplicationService.begin(normalizedDb);
+            return buildMessagePayload("事务已开启: " + currentTransactionId, 0, normalizedSql);
         }
         if (command instanceof SqlCommand.CommitTransaction) {
-            transactionApplicationService.commit(normalizedDb);
+            transactionApplicationService.commit(currentTransactionId != null ? currentTransactionId : normalizedDb);
+            currentTransactionId = null;
             return buildMessagePayload("事务已提交", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.RollbackTransaction) {
-            transactionApplicationService.rollback(normalizedDb);
+            transactionApplicationService.rollback(currentTransactionId != null ? currentTransactionId : normalizedDb);
+            currentTransactionId = null;
             return buildMessagePayload("事务已回滚", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.ShowBackups showBackups) {

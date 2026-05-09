@@ -155,8 +155,10 @@ public class SqlParser {
         if (upper.startsWith("CONNECT TO")) {
             return parseConnect(normalizedSql);
         }
-        if (upper.equals("DISCONNECT")) {
-            return new SqlCommand.Disconnect();
+        if (upper.startsWith("DISCONNECT")) {
+            String rest = normalizedSql.substring("DISCONNECT".length()).trim();
+            String clientId = rest.isEmpty() ? "" : rest;
+            return new SqlCommand.Disconnect(clientId);
         }
         if (upper.equals("SHOW CLIENTS")) {
             return new SqlCommand.ShowClients();
