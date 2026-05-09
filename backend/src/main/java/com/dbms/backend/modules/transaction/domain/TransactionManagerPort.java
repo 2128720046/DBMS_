@@ -31,4 +31,17 @@ public interface TransactionManagerPort {
      * @param transactionId 事务 ID
      */
     void rollback(String transactionId);
+
+    /**
+     * 在事务中记录一个撤销操作。
+     * <p>
+     * 外部模块（如 record 模块）在执行 insert/update/delete 时应当调用此方法，
+     * 注册一个 {@code Runnable} 作为撤销该操作的逆操作。
+     * {@link #rollback(String)} 会逆序执行所有已注册的撤销操作。
+     * </p>
+     *
+     * @param transactionId 事务标识
+     * @param undoAction    撤销操作（通常是一个 lambda/方法引用，捕获执行 undo 需要的上下文）
+     */
+    void recordUndoOperation(String transactionId, Runnable undoAction);
 }
