@@ -223,15 +223,15 @@ public class TodoIndexGatewayImpl implements IndexGateway {
                 ixFile.createNewFile();
             }
             // Build and persist a B+ tree index file for fast equality lookups.
-            List<BPlusTreeIndex.FieldMeta> keyMetas = new ArrayList<>();
+            List<BPlusTreeIndex.FieldMeta> indexMetas = new ArrayList<>();
             for (FieldMeta meta : keyMetasFrom(entry.columns, metas)) {
-                keyMetas.add(new BPlusTreeIndex.FieldMeta(meta.name, meta.type, meta.param));
+                indexMetas.add(new BPlusTreeIndex.FieldMeta(meta.name, meta.type, meta.param));
             }
             List<BPlusTreeIndex.IndexEntry> bptEntries = new ArrayList<>();
             for (IndexEntry ie : indexEntries) {
                 bptEntries.add(new BPlusTreeIndex.IndexEntry(new ArrayList<>(ie.keys), ie.recordOffset));
             }
-            BPlusTreeIndex tree = BPlusTreeIndex.build(bptEntries, 64, entry.unique, entry.ascending, keyMetas);
+            BPlusTreeIndex tree = BPlusTreeIndex.build(bptEntries, 64, entry.unique, entry.ascending, indexMetas);
             tree.save(ixFile.toPath());
         } catch (IOException e) {
             throw new RuntimeException("写入 .ix 失败: " + e.getMessage(), e);
