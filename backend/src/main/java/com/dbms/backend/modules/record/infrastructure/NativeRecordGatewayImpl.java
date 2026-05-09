@@ -4,6 +4,9 @@ import com.dbms.backend.modules.record.domain.RecordGateway;
 import com.dbms.backend.core.storage.config.StorageEngineConfig;
 import com.dbms.backend.core.storage.io.BinaryIoUtils;
 import com.dbms.backend.modules.integrity.domain.IntegrityGateway;
+import com.dbms.backend.modules.index.domain.IndexGateway;
+import com.dbms.backend.modules.index.infrastructure.BPlusTreeIndex;
+import com.dbms.backend.modules.index.infrastructure.IndexTidIo;
 
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Repository;
@@ -21,9 +24,11 @@ import java.util.*;
 public class NativeRecordGatewayImpl implements RecordGateway {
 
     private final IntegrityGateway integrityGateway;
+    private final IndexGateway indexGateway;
 
-    public NativeRecordGatewayImpl(IntegrityGateway integrityGateway) {
+    public NativeRecordGatewayImpl(IntegrityGateway integrityGateway, IndexGateway indexGateway) {
         this.integrityGateway = integrityGateway;
+        this.indexGateway = indexGateway;
     }
 
     // 严苛地按照《验收要求》约定的160字节 FieldBlock
@@ -144,10 +149,15 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                     BinaryIoUtils.writeFixedString(raf, v, meta.param + 1);
                 }
 
-                // 强制文件指针对齐 TDF 定义的 length (跳过 4 倍数对齐空白)
-                raf.seek(posBefore + meta.length);
+                // 计算实际写入长度，按 TDF 约定补齐到 meta.length
+                long written = raf.getFilePointer() - posBefore;
+                int padding = (int) (meta.length - written);
+                if (padding > 0) {
+                    BinaryIoUtils.writeZeroPadding(raf, padding);
+                }
             }
             updateTableRecordCount(schemaName, tableName, 1);
+            rebuildIndexes(schemaName, tableName);
             return 1;
         } catch (Exception e) {
             throw new RuntimeException("写入数据文件 (.trd) 失败: " + e.getMessage(), e);
@@ -163,6 +173,12 @@ public class NativeRecordGatewayImpl implements RecordGateway {
         String trdPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + tableName + ".trd";
         File trdFile = new File(trdPath);
         if (!trdFile.exists()) return results;
+
+        // Prefer index-based lookup when equality filters match an index.
+        List<Map<String, Object>> indexed = tryQueryByIndex(schemaName, tableName, filters, metas, limit, offset);
+        if (indexed != null) {
+            return indexed;
+        }
 
         int recordLength = 4; // status flag header aligned to 4 bytes
         for (FieldMeta m : metas) {
@@ -284,6 +300,9 @@ public class NativeRecordGatewayImpl implements RecordGateway {
                 }
                 updated++;
             }
+            if (updated > 0) {
+                rebuildIndexes(schemaName, tableName);
+            }
             return updated;
         } catch (IllegalArgumentException e) {
             throw e;
@@ -331,8 +350,155 @@ public class NativeRecordGatewayImpl implements RecordGateway {
         }
         if (deleted > 0) {
             updateTableRecordCount(schemaName, tableName, -deleted);
+            rebuildIndexes(schemaName, tableName);
         }
         return deleted;
+    }
+
+    private void rebuildIndexes(String schemaName, String tableName) {
+        try {
+            List<Map<String, Object>> indexes = indexGateway.listIndexes(schemaName, tableName);
+            for (Map<String, Object> row : indexes) {
+                Object name = row.get("name");
+                if (name != null) {
+                    indexGateway.rebuildIndex(schemaName, tableName, String.valueOf(name));
+                }
+            }
+        } catch (Exception ignored) {
+            // Index rebuild failure should not block record writes.
+        }
+    }
+
+    private List<Map<String, Object>> tryQueryByIndex(String schemaName, String tableName,
+                                                      Map<String, Object> filters,
+                                                      List<FieldMeta> metas,
+                                                      int limit,
+                                                      int offset) {
+        if (filters == null || filters.isEmpty()) {
+            return null;
+        }
+        File schemaDir = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
+        File tidFile = new File(schemaDir, tableName + ".tid");
+        if (!tidFile.exists()) {
+            return null;
+        }
+        IndexTidIo.IndexDefinition chosen = null;
+        List<IndexTidIo.IndexDefinition> entries;
+        try {
+            entries = IndexTidIo.read(tidFile);
+        } catch (IOException e) {
+            return null;
+        }
+        for (IndexTidIo.IndexDefinition entry : entries) {
+            boolean allMatch = true;
+            for (String col : entry.columns) {
+                if (!filters.containsKey(col)) {
+                    allMatch = false;
+                    break;
+                }
+            }
+            if (allMatch) {
+                if (chosen == null || entry.columns.size() > chosen.columns.size()) {
+                    chosen = entry;
+                }
+            }
+        }
+        if (chosen == null || chosen.indexFile == null || chosen.indexFile.isBlank()) {
+            return null;
+        }
+
+        List<FieldMeta> keyMetas = new ArrayList<>();
+        List<Object> keyParts = new ArrayList<>();
+        for (String col : chosen.columns) {
+            FieldMeta meta = metas.stream().filter(m -> m.name.equalsIgnoreCase(col)).findFirst().orElse(null);
+            if (meta == null) {
+                return null;
+            }
+            keyMetas.add(meta);
+            keyParts.add(normalizeFilterValue(filters.get(col), meta));
+        }
+
+        List<BPlusTreeIndex.FieldMeta> indexMetas = new ArrayList<>();
+        for (FieldMeta meta : keyMetas) {
+            indexMetas.add(new BPlusTreeIndex.FieldMeta(meta.name, meta.type, meta.param));
+        }
+        try {
+            BPlusTreeIndex tree = BPlusTreeIndex.load(new File(chosen.indexFile).toPath(), indexMetas);
+            List<Long> offsets = tree.searchEquals(BPlusTreeIndex.normalizeKeyParts(keyParts, indexMetas));
+            if (offsets.isEmpty()) {
+                return List.of();
+            }
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (Long recordOffset : offsets) {
+                Map<String, Object> row = readRowAtOffset(schemaName, tableName, metas, recordOffset);
+                if (row != null && matchesFilters(row, filters)) {
+                    rows.add(row);
+                }
+            }
+            int start = Math.max(0, offset);
+            int end = limit > 0 ? Math.min(rows.size(), start + limit) : rows.size();
+            if (start >= rows.size()) {
+                return List.of();
+            }
+            return new ArrayList<>(rows.subList(start, end));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> readRowAtOffset(String schemaName, String tableName,
+                                                List<FieldMeta> metas, long recordOffset) {
+        String trdPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + tableName + ".trd";
+        File trdFile = new File(trdPath);
+        if (!trdFile.exists()) {
+            return null;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
+            raf.seek(recordOffset);
+            int status = raf.readInt();
+            if (status != 1) {
+                return null;
+            }
+            return readRow(raf, metas, recordOffset + 4);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private boolean matchesFilters(Map<String, Object> row, Map<String, Object> filters) {
+        if (filters == null || filters.isEmpty()) {
+            return true;
+        }
+        for (Map.Entry<String, Object> entry : filters.entrySet()) {
+            Object expected = entry.getValue();
+            Object actual = row.get(entry.getKey());
+            if (expected != null && !expected.toString().equals(String.valueOf(actual))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Object normalizeFilterValue(Object value, FieldMeta meta) {
+        if (value == null) return null;
+        switch (meta.type) {
+            case 1:
+                return convertToInt(value);
+            case 2:
+                return convertToBoolean(value);
+            case 3:
+                return convertToDouble(value);
+            case 5:
+                if (value instanceof Number) return ((Number) value).longValue();
+                try {
+                    return Long.parseLong(String.valueOf(value));
+                } catch (NumberFormatException e) {
+                    return 0L;
+                }
+            case 4:
+            default:
+                return convertToString(value);
+        }
     }
 
     private void updateTableRecordCount(String schemaName, String tableName, int delta) {

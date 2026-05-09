@@ -8,7 +8,6 @@ import org.springframework.stereotype.Repository;
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -30,16 +29,6 @@ public class TodoIndexGatewayImpl implements IndexGateway {
 
     private static final int FIELD_BLOCK_SIZE = 160;
     private static final int TID_BLOCK_SIZE = 904;
-
-    private static class TidEntry {
-        long offset;
-        String name;
-        boolean unique;
-        boolean ascending;
-        List<String> columns;
-        String recordFile;
-        String indexFile;
-    }
 
     private static class FieldMeta {
         String name;
@@ -101,9 +90,9 @@ public class TodoIndexGatewayImpl implements IndexGateway {
         if (!tidFile.exists()) {
             return;
         }
-        TidEntry entry;
+        IndexTidIo.IndexDefinition entry;
         try {
-            entry = findTidEntry(tidFile, indexName);
+            entry = IndexTidIo.find(tidFile, indexName);
         } catch (IOException e) {
             throw new RuntimeException("读取 .tid 失败: " + e.getMessage(), e);
         }
@@ -130,9 +119,9 @@ public class TodoIndexGatewayImpl implements IndexGateway {
             return List.of();
         }
         try {
-            List<TidEntry> entries = readTidEntries(tidFile);
+            List<IndexTidIo.IndexDefinition> entries = IndexTidIo.read(tidFile);
             List<Map<String, Object>> results = new ArrayList<>();
-            for (TidEntry entry : entries) {
+            for (IndexTidIo.IndexDefinition entry : entries) {
                 Map<String, Object> row = new HashMap<>();
                 row.put("name", entry.name);
                 row.put("columns", String.join(",", entry.columns));
@@ -154,9 +143,9 @@ public class TodoIndexGatewayImpl implements IndexGateway {
         if (!tidFile.exists()) {
             throw new IllegalArgumentException("索引描述文件不存在");
         }
-        TidEntry entry;
+        IndexTidIo.IndexDefinition entry;
         try {
-            entry = findTidEntry(tidFile, indexName);
+            entry = IndexTidIo.find(tidFile, indexName);
         } catch (IOException e) {
             throw new RuntimeException("读取 .tid 失败: " + e.getMessage(), e);
         }
@@ -225,23 +214,25 @@ public class TodoIndexGatewayImpl implements IndexGateway {
         }
         indexEntries.sort(comparator);
 
-        File ixFile = new File(entry.indexFile);
+        File ixFile = entry.indexFile != null && !entry.indexFile.isBlank()
+                ? new File(entry.indexFile)
+                : new File(schemaDir, indexName + ".ix");
         try {
             if (!ixFile.exists()) {
                 ixFile.getParentFile().mkdirs();
                 ixFile.createNewFile();
             }
-            StringBuilder sb = new StringBuilder();
-            sb.append("# index=").append(entry.name)
-                    .append(" table=").append(tableName)
-                    .append(" unique=").append(entry.unique)
-                    .append(" asc=").append(entry.ascending)
-                    .append(" columns=").append(String.join(",", entry.columns))
-                    .append("\n");
-            for (IndexEntry ie : indexEntries) {
-                sb.append(toUniqueKey(ie.keys)).append("\t").append(ie.recordOffset).append("\n");
+            // Build and persist a B+ tree index file for fast equality lookups.
+            List<BPlusTreeIndex.FieldMeta> keyMetas = new ArrayList<>();
+            for (FieldMeta meta : keyMetasFrom(entry.columns, metas)) {
+                keyMetas.add(new BPlusTreeIndex.FieldMeta(meta.name, meta.type, meta.param));
             }
-            java.nio.file.Files.writeString(ixFile.toPath(), sb.toString(), StandardCharsets.UTF_8);
+            List<BPlusTreeIndex.IndexEntry> bptEntries = new ArrayList<>();
+            for (IndexEntry ie : indexEntries) {
+                bptEntries.add(new BPlusTreeIndex.IndexEntry(new ArrayList<>(ie.keys), ie.recordOffset));
+            }
+            BPlusTreeIndex tree = BPlusTreeIndex.build(bptEntries, 64, entry.unique, entry.ascending, keyMetas);
+            tree.save(ixFile.toPath());
         } catch (IOException e) {
             throw new RuntimeException("写入 .ix 失败: " + e.getMessage(), e);
         }
@@ -281,49 +272,6 @@ public class TodoIndexGatewayImpl implements IndexGateway {
             BinaryIoUtils.writeFixedString(raf, indexFile, 256);
             BinaryIoUtils.writeZeroPadding(raf, 2);
         }
-    }
-
-    private List<TidEntry> readTidEntries(File tidFile) throws IOException {
-        List<TidEntry> entries = new ArrayList<>();
-        try (RandomAccessFile raf = new RandomAccessFile(tidFile, "r")) {
-            long length = raf.length();
-            long pos = 0;
-            while (pos + TID_BLOCK_SIZE <= length) {
-                raf.seek(pos);
-                String name = BinaryIoUtils.readFixedString(raf, 128);
-                boolean unique = BinaryIoUtils.readBool(raf);
-                boolean asc = BinaryIoUtils.readBool(raf);
-                int fieldNum = raf.readInt();
-                String f1 = BinaryIoUtils.readFixedString(raf, 128);
-                String f2 = BinaryIoUtils.readFixedString(raf, 128);
-                String recordFile = BinaryIoUtils.readFixedString(raf, 256);
-                String indexFile = BinaryIoUtils.readFixedString(raf, 256);
-                if (!name.isEmpty()) {
-                    TidEntry entry = new TidEntry();
-                    entry.offset = pos;
-                    entry.name = name;
-                    entry.unique = unique;
-                    entry.ascending = asc;
-                    entry.columns = new ArrayList<>();
-                    if (fieldNum >= 1 && !f1.isBlank()) entry.columns.add(f1);
-                    if (fieldNum >= 2 && !f2.isBlank()) entry.columns.add(f2);
-                    entry.recordFile = recordFile;
-                    entry.indexFile = indexFile;
-                    entries.add(entry);
-                }
-                pos += TID_BLOCK_SIZE;
-            }
-        }
-        return entries;
-    }
-
-    private TidEntry findTidEntry(File tidFile, String indexName) throws IOException {
-        for (TidEntry entry : readTidEntries(tidFile)) {
-            if (entry.name.equalsIgnoreCase(indexName)) {
-                return entry;
-            }
-        }
-        return null;
     }
 
     private void clearTidEntry(File tidFile, long offset) throws IOException {
@@ -379,6 +327,17 @@ public class TodoIndexGatewayImpl implements IndexGateway {
             }
         }
         return metas;
+    }
+
+    private List<FieldMeta> keyMetasFrom(List<String> columns, List<FieldMeta> metas) {
+        List<FieldMeta> result = new ArrayList<>();
+        for (String col : columns) {
+            FieldMeta meta = metas.stream().filter(m -> m.name.equalsIgnoreCase(col)).findFirst().orElse(null);
+            if (meta != null) {
+                result.add(meta);
+            }
+        }
+        return result;
     }
 
     private Comparable<?> readComparable(RandomAccessFile raf, FieldMeta meta) throws IOException {
