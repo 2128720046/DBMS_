@@ -184,6 +184,21 @@ public class SqlExecutor {
             }
 
             int affected = recordApplicationService.insert(normalizedDb, insert.tableName(), values);
+
+            // 事务内注册撤销操作：删除刚插入的行
+            if (currentTransactionId != null) {
+                Map<String, Object> insertedValues = new LinkedHashMap<>(values);
+                String dbName = normalizedDb;
+                String tblName = insert.tableName();
+                transactionApplicationService.recordUndoOperation(currentTransactionId, () -> {
+                    try {
+                        recordApplicationService.delete(dbName, tblName, insertedValues);
+                    } catch (Exception ignored) {
+                        // 撤销失败不阻断
+                    }
+                });
+            }
+
             return buildMessagePayload("插入成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Select select) {
@@ -199,14 +214,69 @@ public class SqlExecutor {
         }
         if (command instanceof SqlCommand.Update update) {
             assertSimpleFilter(update.filters(), "UPDATE");
+
+            // 事务内：先查询旧值用于可能的回滚
+            List<Map<String, Object>> oldRows = null;
+            if (currentTransactionId != null) {
+                oldRows = recordApplicationService.query(normalizedDb, update.tableName(),
+                        toEqualityMap(update.filters()), 200, 0);
+            }
+
             int affected = recordApplicationService.update(normalizedDb, update.tableName(),
                     toEqualityMap(update.filters()), update.values());
+
+            // 事务内注册撤销操作：用旧值覆盖回原来的数据
+            if (currentTransactionId != null && oldRows != null && !oldRows.isEmpty()) {
+                String dbName = normalizedDb;
+                String tblName = update.tableName();
+                Map<String, Object> updateValues = new LinkedHashMap<>(update.values());
+                List<Map<String, Object>> savedOldRows = new ArrayList<>(oldRows);
+                transactionApplicationService.recordUndoOperation(currentTransactionId, () -> {
+                    for (Map<String, Object> row : savedOldRows) {
+                        try {
+                            Map<String, Object> restore = new LinkedHashMap<>();
+                            for (String col : updateValues.keySet()) {
+                                restore.put(col, row.get(col));
+                            }
+                            // 以原始过滤条件定位行，恢复旧值
+                            recordApplicationService.update(dbName, tblName,
+                                    toEqualityMap(update.filters()), restore);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                });
+            }
+
             return buildMessagePayload("更新成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Delete delete) {
             assertSimpleFilter(delete.filters(), "DELETE");
+
+            // 事务内：先查询被删除的行用于可能的回滚
+            List<Map<String, Object>> deletedRows = null;
+            if (currentTransactionId != null) {
+                deletedRows = recordApplicationService.query(normalizedDb, delete.tableName(),
+                        toEqualityMap(delete.filters()), 200, 0);
+            }
+
             int affected = recordApplicationService.delete(normalizedDb, delete.tableName(),
                     toEqualityMap(delete.filters()));
+
+            // 事务内注册撤销操作：重新插入被删除的行
+            if (currentTransactionId != null && deletedRows != null && !deletedRows.isEmpty()) {
+                String dbName = normalizedDb;
+                String tblName = delete.tableName();
+                List<Map<String, Object>> savedRows = new ArrayList<>(deletedRows);
+                transactionApplicationService.recordUndoOperation(currentTransactionId, () -> {
+                    for (Map<String, Object> row : savedRows) {
+                        try {
+                            recordApplicationService.insert(dbName, tblName, row);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                });
+            }
+
             return buildMessagePayload("删除成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.ShowIndexes showIndexes) {
