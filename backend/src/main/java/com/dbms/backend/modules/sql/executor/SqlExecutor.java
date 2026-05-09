@@ -359,7 +359,14 @@ public class SqlExecutor {
         if (databaseName == null || databaseName.isBlank()) {
             throw new IllegalArgumentException("请先指定数据库");
         }
-        return domainService.normalizeDatabaseName(databaseName);
+        String normalized = domainService.normalizeDatabaseName(databaseName);
+        // 检查数据库是否存在（避免在不存在的数据库上执行操作）
+        boolean exists = databaseApplicationService.listDatabases()
+                .stream().anyMatch(db -> db.getName().equals(normalized));
+        if (!exists) {
+            throw new IllegalArgumentException("数据库不存在: " + databaseName);
+        }
+        return normalized;
     }
 
     private Map<String, Object> buildDatabaseListPayload() {
