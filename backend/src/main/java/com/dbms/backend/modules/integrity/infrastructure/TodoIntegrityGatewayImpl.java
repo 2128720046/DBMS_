@@ -12,9 +12,12 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 完整性约束网关占位实现。
@@ -36,6 +39,11 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
     private static final int TYPE_DEFAULT = 5;
     private static final int TYPE_IDENTITY = 6;
     private static final int TYPE_CHECK = 7;
+
+    private static final Pattern CHECK_PATTERN = Pattern.compile(
+            "(?i)CHECK\\s*\\(?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(=|!=|>=|<=|>|<)\\s*([^\\)]+)\\s*\\)?");
+    private static final Pattern FK_PATTERN = Pattern.compile(
+            "(?i)FOREIGN\\s+KEY\\s*\\(([^\\)]+)\\)\\s+REFERENCES\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\(([^\\)]+)\\)");
 
     private String normalizeType(String raw) {
         if (raw == null) {
@@ -150,6 +158,7 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
 
     @Override
     public List<Map<String, Object>> validateRow(String schemaName, String tableName, Map<String, Object> row) {
+        // 行级校验：实体完整性、参照完整性、用户定义完整性
         if (row == null) {
             return List.of();
         }
@@ -162,7 +171,7 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
             if (column.isBlank()) {
                 continue;
             }
-            Object value = row.get(column);
+            Object value = getValueIgnoreCase(row, column);
             if ("NOT_NULL".equalsIgnoreCase(type)) {
                 if (value == null || (value instanceof String s && s.isBlank())) {
                     issues.add(issue("NOT_NULL", column, "值不能为空"));
@@ -179,16 +188,42 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
                     issues.add(issue(type.toUpperCase(), column, "存在重复值: " + value));
                 }
             }
+            if ("CHECK".equalsIgnoreCase(type)) {
+                String parameter = Objects.toString(c.get("parameter"), "");
+                CheckExpression expr = parseCheckExpression(parameter, column);
+                if (expr == null) {
+                    issues.add(issue("CHECK", column, "CHECK 约束解析失败: " + parameter));
+                } else if (!matchCheckExpression(row, expr)) {
+                    issues.add(issue("CHECK", expr.column, "不满足检查条件: " + expr.raw));
+                }
+            }
+            if ("FOREIGN_KEY".equalsIgnoreCase(type)) {
+                String parameter = Objects.toString(c.get("parameter"), "");
+                ForeignKeyDefinition fk = parseForeignKey(parameter, column);
+                if (fk == null) {
+                    issues.add(issue("FOREIGN_KEY", column, "外键解析失败: " + parameter));
+                    continue;
+                }
+                Object fkValue = getValueIgnoreCase(row, fk.localColumn);
+                if (fkValue == null || (fkValue instanceof String s && s.isBlank())) {
+                    continue;
+                }
+                if (!existsReference(schemaName, fk.refTable, fk.refColumn, fkValue)) {
+                    issues.add(issue("FOREIGN_KEY", fk.localColumn,
+                            "外键引用不存在: " + fk.refTable + "." + fk.refColumn + " = " + fkValue));
+                }
+            }
         }
         return issues;
     }
 
     @Override
     public List<Map<String, Object>> validateTable(String schemaName, String tableName) {
+        // 全表校验：用于后台检查或批量校验
         List<Map<String, Object>> issues = new ArrayList<>();
         List<Map<String, Object>> constraints = listConstraints(schemaName, tableName);
 
-        // 仅做最小可验收：NOT NULL / UNIQUE / PRIMARY KEY
+        // 全表校验：NOT NULL / UNIQUE / PRIMARY KEY / CHECK / FOREIGN KEY
         for (Map<String, Object> c : constraints) {
             String type = normalizeType(Objects.toString(c.get("type"), ""));
             String column = Objects.toString(c.get("column"), "");
@@ -201,12 +236,55 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
             if ("PRIMARY_KEY".equalsIgnoreCase(type) || "UNIQUE".equalsIgnoreCase(type)) {
                 issues.addAll(checkUnique(schemaName, tableName, column, "PRIMARY_KEY".equalsIgnoreCase(type)));
             }
+            if ("CHECK".equalsIgnoreCase(type)) {
+                String parameter = Objects.toString(c.get("parameter"), "");
+                CheckExpression expr = parseCheckExpression(parameter, column);
+                if (expr != null) {
+                    issues.addAll(checkExpression(schemaName, tableName, expr));
+                }
+            }
+            if ("FOREIGN_KEY".equalsIgnoreCase(type)) {
+                String parameter = Objects.toString(c.get("parameter"), "");
+                ForeignKeyDefinition fk = parseForeignKey(parameter, column);
+                if (fk != null) {
+                    issues.addAll(checkForeignKey(schemaName, tableName, fk));
+                }
+            }
         }
 
         return issues;
     }
 
+    @Override
+    public List<Map<String, Object>> validateDelete(String schemaName, String tableName, Map<String, Object> filters) {
+        // 删除校验：参照完整性（是否被外键引用）
+        List<Map<String, Object>> issues = new ArrayList<>();
+        // 仅检查参照完整性：是否存在其他表外键引用当前表
+        List<ForeignKeyDefinition> inbound = listInboundForeignKeys(schemaName, tableName);
+        if (inbound.isEmpty()) {
+            return issues;
+        }
+        List<Map<String, Object>> targetRows = findRows(schemaName, tableName, filters);
+        for (Map<String, Object> row : targetRows) {
+            for (ForeignKeyDefinition fk : inbound) {
+                Object value = getValueIgnoreCase(row, fk.refColumn);
+                if (value == null || (value instanceof String s && s.isBlank())) {
+                    continue;
+                }
+                if (existsReference(schemaName, fk.localTable, fk.localColumn, value)) {
+                    issues.add(issue("FOREIGN_KEY", fk.localColumn,
+                            "存在外键引用: " + fk.localTable + "." + fk.localColumn + " = " + value));
+                }
+            }
+        }
+        return issues;
+    }
+
     private record ParsedConstraint(String column, String type, String parameter) {}
+
+    private record ForeignKeyDefinition(String localTable, String localColumn, String refTable, String refColumn) {}
+
+    private record CheckExpression(String column, String operator, String literal, String raw) {}
 
     private ParsedConstraint normalizeRawConstraint(String columnName, String type, String parameter) {
         String safeColumn = columnName == null ? "" : columnName;
@@ -415,6 +493,281 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
         } catch (Exception ignored) {
         }
         return false;
+    }
+
+    // =============== 用户定义 CHECK 校验 ===============
+
+    private CheckExpression parseCheckExpression(String parameter, String fallbackColumn) {
+        // 解析简单 CHECK 表达式：CHECK (col op literal)
+        if (parameter == null || parameter.isBlank()) {
+            return null;
+        }
+        Matcher matcher = CHECK_PATTERN.matcher(parameter.trim());
+        if (!matcher.find()) {
+            return null;
+        }
+        String column = matcher.group(1) != null ? matcher.group(1).trim() : fallbackColumn;
+        if (column == null || column.isBlank()) {
+            column = fallbackColumn;
+        }
+        if (column != null) {
+            column = column.trim();
+            if (!column.isEmpty()) {
+                column = column.toUpperCase(Locale.ROOT);
+            }
+        }
+        String operator = matcher.group(2) != null ? matcher.group(2).trim() : "=";
+        String literal = matcher.group(3) != null ? matcher.group(3).trim() : "";
+        return new CheckExpression(column, operator, literal, parameter.trim());
+    }
+
+    private boolean matchCheckExpression(Map<String, Object> row, CheckExpression expr) {
+        Object value = getValueIgnoreCase(row, expr.column);
+        Object literal = parseLiteral(expr.literal);
+        int cmp = compareValue(value, literal);
+        return switch (expr.operator) {
+            case "=" -> cmp == 0;
+            case "!=" -> cmp != 0;
+            case ">" -> cmp > 0;
+            case "<" -> cmp < 0;
+            case ">=" -> cmp >= 0;
+            case "<=" -> cmp <= 0;
+            default -> false;
+        };
+    }
+
+    private List<Map<String, Object>> checkExpression(String schemaName, String tableName, CheckExpression expr) {
+        List<Map<String, Object>> issues = new ArrayList<>();
+        List<Map<String, Object>> rows = findRows(schemaName, tableName, Map.of());
+        for (Map<String, Object> row : rows) {
+            if (!matchCheckExpression(row, expr)) {
+                issues.add(issue("CHECK", expr.column, "不满足检查条件: " + expr.raw));
+            }
+        }
+        return issues;
+    }
+
+    // =============== 参照完整性校验 ===============
+
+    private ForeignKeyDefinition parseForeignKey(String parameter, String fallbackColumn) {
+        // 解析外键格式：FOREIGN KEY (col) REFERENCES ref_table(ref_col)
+        if (parameter == null || parameter.isBlank()) {
+            return null;
+        }
+        Matcher matcher = FK_PATTERN.matcher(parameter.trim());
+        if (!matcher.find()) {
+            return null;
+        }
+        String localColumn = matcher.group(1).trim();
+        String refTable = matcher.group(2).trim();
+        String refColumn = matcher.group(3).trim();
+        if (localColumn.isBlank()) {
+            localColumn = fallbackColumn;
+        }
+        localColumn = normalizeIdentifierName(localColumn);
+        refTable = normalizeIdentifierName(refTable);
+        refColumn = normalizeIdentifierName(refColumn);
+        return new ForeignKeyDefinition("", localColumn, refTable, refColumn);
+    }
+
+    private boolean existsReference(String schemaName, String tableName, String column, Object value) {
+        // 判断引用表中是否存在对应值
+        File schemaDir = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
+        File tdfFile = new File(schemaDir, tableName + ".tdf");
+        File trdFile = new File(schemaDir, tableName + ".trd");
+        if (!tdfFile.exists() || !trdFile.exists()) {
+            return false;
+        }
+        try {
+            List<FieldMeta> metas = parseTdf(tdfFile);
+            FieldMeta target = metas.stream().filter(m -> m.name.equalsIgnoreCase(column)).findFirst().orElse(null);
+            if (target == null) {
+                return false;
+            }
+            int recordLength = 4;
+            for (FieldMeta m : metas) recordLength += m.length;
+            String needle = Objects.toString(value, "");
+            try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
+                long fileLength = raf.length();
+                long pos = 0;
+                while (pos + recordLength <= fileLength) {
+                    raf.seek(pos);
+                    int status = raf.readInt();
+                    if (status == 1) {
+                        raf.seek(pos + 4L + target.offset);
+                        Object current = readValue(raf, target);
+                        if (needle.equals(Objects.toString(current, ""))) {
+                            return true;
+                        }
+                    }
+                    pos += recordLength;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return false;
+    }
+
+    private List<Map<String, Object>> checkForeignKey(String schemaName, String tableName, ForeignKeyDefinition fk) {
+        // 全表外键一致性检查
+        List<Map<String, Object>> issues = new ArrayList<>();
+        List<Map<String, Object>> rows = findRows(schemaName, tableName, Map.of());
+        for (Map<String, Object> row : rows) {
+            Object value = getValueIgnoreCase(row, fk.localColumn);
+            if (value == null || (value instanceof String s && s.isBlank())) {
+                continue;
+            }
+            if (!existsReference(schemaName, fk.refTable, fk.refColumn, value)) {
+                issues.add(issue("FOREIGN_KEY", fk.localColumn,
+                        "外键引用不存在: " + fk.refTable + "." + fk.refColumn + " = " + value));
+            }
+        }
+        return issues;
+    }
+
+    private List<ForeignKeyDefinition> listInboundForeignKeys(String schemaName, String refTable) {
+        // 扫描 schema 下所有 .tic，找出指向 refTable 的外键
+        List<ForeignKeyDefinition> inbound = new ArrayList<>();
+        File schemaDir = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
+        File[] tics = schemaDir.listFiles((dir, name) -> name.toLowerCase().endsWith(".tic"));
+        if (tics == null) {
+            return inbound;
+        }
+        for (File tic : tics) {
+            String localTable = tic.getName().replaceFirst("\\.tic$", "");
+            try (RandomAccessFile raf = new RandomAccessFile(tic, "r")) {
+                long length = raf.length();
+                long pos = 0;
+                while (pos + TIC_BLOCK_SIZE <= length) {
+                    raf.seek(pos);
+                    String name = BinaryIoUtils.readFixedString(raf, 128);
+                    String field = BinaryIoUtils.readFixedString(raf, 128);
+                    int type = raf.readInt();
+                    String param = BinaryIoUtils.readFixedString(raf, 256);
+                    if (!name.isEmpty() && typeName(type).equalsIgnoreCase("FOREIGN KEY")) {
+                        ForeignKeyDefinition fk = parseForeignKey(param, field);
+                        if (fk != null && fk.refTable.equalsIgnoreCase(refTable)) {
+                            inbound.add(new ForeignKeyDefinition(localTable, fk.localColumn, fk.refTable, fk.refColumn));
+                        }
+                    }
+                    pos += TIC_BLOCK_SIZE;
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        return inbound;
+    }
+
+    private List<Map<String, Object>> findRows(String schemaName, String tableName, Map<String, Object> filters) {
+        // 基于全表扫描获取满足条件的行
+        List<Map<String, Object>> results = new ArrayList<>();
+        File schemaDir = new File(StorageEngineConfig.getDATA_DIR() + File.separator + schemaName);
+        File tdfFile = new File(schemaDir, tableName + ".tdf");
+        File trdFile = new File(schemaDir, tableName + ".trd");
+        if (!tdfFile.exists() || !trdFile.exists()) {
+            return results;
+        }
+        try {
+            List<FieldMeta> metas = parseTdf(tdfFile);
+            int recordLength = 4;
+            for (FieldMeta m : metas) recordLength += m.length;
+            try (RandomAccessFile raf = new RandomAccessFile(trdFile, "r")) {
+                long fileLength = raf.length();
+                long pos = 0;
+                while (pos + recordLength <= fileLength) {
+                    raf.seek(pos);
+                    int status = raf.readInt();
+                    if (status == 1) {
+                        Map<String, Object> row = new HashMap<>();
+                        for (FieldMeta meta : metas) {
+                            raf.seek(pos + 4L + meta.offset);
+                            row.put(meta.name, readValue(raf, meta));
+                        }
+                        if (matchFilters(row, filters)) {
+                            results.add(row);
+                        }
+                    }
+                    pos += recordLength;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return results;
+    }
+
+    private boolean matchFilters(Map<String, Object> row, Map<String, Object> filters) {
+        if (filters == null || filters.isEmpty()) {
+            return true;
+        }
+        for (Map.Entry<String, Object> entry : filters.entrySet()) {
+            Object expected = entry.getValue();
+            Object actual = getValueIgnoreCase(row, entry.getKey());
+            if (expected != null && !Objects.toString(actual, "").equals(Objects.toString(expected, ""))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private Object getValueIgnoreCase(Map<String, Object> row, String key) {
+        if (row == null || key == null) {
+            return null;
+        }
+        Object value = row.get(key);
+        if (value != null || row.containsKey(key)) {
+            return value;
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private String normalizeIdentifierName(String name) {
+        if (name == null) {
+            return "";
+        }
+        String trimmed = name.trim();
+        return trimmed.isEmpty() ? "" : trimmed.toUpperCase(Locale.ROOT);
+    }
+
+    private Object parseLiteral(String literal) {
+        String text = literal == null ? "" : literal.trim();
+        if (text.isEmpty()) {
+            return "";
+        }
+        if ((text.startsWith("'") && text.endsWith("'")) || (text.startsWith("\"") && text.endsWith("\""))) {
+            return text.substring(1, text.length() - 1);
+        }
+        if ("NULL".equalsIgnoreCase(text)) {
+            return null;
+        }
+        if ("TRUE".equalsIgnoreCase(text) || "FALSE".equalsIgnoreCase(text)) {
+            return Boolean.parseBoolean(text);
+        }
+        try {
+            if (text.contains(".")) {
+                return Double.parseDouble(text);
+            }
+            return Long.parseLong(text);
+        } catch (NumberFormatException ignored) {
+        }
+        return text;
+    }
+
+    private int compareValue(Object left, Object right) {
+        if (left == null && right == null) return 0;
+        if (left == null) return -1;
+        if (right == null) return 1;
+        if (left instanceof Number && right instanceof Number) {
+            return Double.compare(((Number) left).doubleValue(), ((Number) right).doubleValue());
+        }
+        if (left instanceof Boolean && right instanceof Boolean) {
+            return Boolean.compare((Boolean) left, (Boolean) right);
+        }
+        return Objects.toString(left, "").compareTo(Objects.toString(right, ""));
     }
 
     private List<Map<String, Object>> checkNotNull(String schemaName, String tableName, String column) {

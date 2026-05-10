@@ -70,7 +70,7 @@ public class SqlParser {
         }
         if (upper.startsWith("SELECT")) {
             SelectParts parts = parseSelect(normalizedSql);
-            return new SqlCommand.Select(parts.tableName, parts.projection, parts.filters, parts.orderBy, parts.limit);
+            return new SqlCommand.Select(parts.tableName, parts.projection, parts.filters, parts.orderBy, parts.limit, parts.joins);
         }
         if (upper.startsWith("UPDATE")) {
             UpdateParts parts = parseUpdate(normalizedSql);
@@ -271,7 +271,82 @@ public class SqlParser {
         if (upper.contains("UNIQUE")) {
             column.setUq(true);
         }
+        if (upper.contains("CHECK")) {
+            String expr = extractInlineCheck(def);
+            if (expr != null && !expr.isBlank()) {
+                column.setCheckExpression(expr);
+            }
+        }
+        if (upper.contains("REFERENCES")) {
+            ForeignKey fk = extractInlineForeignKey(def);
+            if (fk != null) {
+                column.setForeignKeyTable(fk.table);
+                column.setForeignKeyColumn(fk.column);
+            }
+        }
         return column;
+    }
+
+    private record QualifiedColumn(String table, String column) {}
+
+    private QualifiedColumn parseQualifiedColumn(String text) {
+        String raw = stripIdentifierQuotes(text.trim());
+        String[] parts = raw.split("\\.");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("JOIN 列必须使用 table.column 格式");
+        }
+        return new QualifiedColumn(domainService.normalizeIdentifier(parts[0].trim()),
+                domainService.normalizeIdentifier(parts[1].trim()));
+    }
+
+    private String normalizeQualifiedIdentifier(String identifier) {
+        String raw = identifier == null ? "" : identifier.trim();
+        if (!raw.contains(".")) {
+            return domainService.normalizeIdentifier(raw);
+        }
+        String[] parts = raw.split("\\.");
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("标识符格式不支持: " + identifier);
+        }
+        return domainService.normalizeIdentifier(parts[0].trim()) + "." +
+                domainService.normalizeIdentifier(parts[1].trim());
+    }
+
+    private String extractInlineCheck(String def) {
+        String upper = def.toUpperCase(Locale.ROOT);
+        int idx = upper.indexOf("CHECK");
+        if (idx == -1) {
+            return null;
+        }
+        return def.substring(idx).trim();
+    }
+
+    private static class ForeignKey {
+        String table;
+        String column;
+    }
+
+    private ForeignKey extractInlineForeignKey(String def) {
+        String upper = def.toUpperCase(Locale.ROOT);
+        int idx = upper.indexOf("REFERENCES");
+        if (idx == -1) {
+            return null;
+        }
+        String rest = def.substring(idx + "REFERENCES".length()).trim();
+        int parenStart = rest.indexOf('(');
+        int parenEnd = parenStart == -1 ? -1 : findMatchingParen(rest, parenStart);
+        String table = parenStart == -1 ? rest.trim() : rest.substring(0, parenStart).trim();
+        String column = "";
+        if (parenStart != -1 && parenEnd != -1) {
+            column = rest.substring(parenStart + 1, parenEnd).trim();
+        }
+        if (table.isEmpty() || column.isEmpty()) {
+            return null;
+        }
+        ForeignKey fk = new ForeignKey();
+        fk.table = domainService.normalizeIdentifier(stripIdentifierQuotes(table));
+        fk.column = domainService.normalizeIdentifier(stripIdentifierQuotes(column));
+        return fk;
     }
 
     private InsertParts parseInsert(String sql) {
@@ -333,9 +408,12 @@ public class SqlParser {
         int orderIndex = findKeyword(upperAfterFrom, " ORDER BY ");
         int limitIndex = findKeyword(upperAfterFrom, " LIMIT ");
 
-        int endOfTable = minPositive(whereIndex, orderIndex, limitIndex, upperAfterFrom.length());
-        String tablePart = afterFrom.substring(0, endOfTable).trim();
-        String tableName = domainService.normalizeIdentifier(extractIdentifierToken(tablePart));
+        int endOfFrom = minPositive(whereIndex, orderIndex, limitIndex, upperAfterFrom.length());
+        String fromPart = afterFrom.substring(0, endOfFrom).trim();
+        String baseToken = extractIdentifierToken(fromPart);
+        String tableName = domainService.normalizeIdentifier(baseToken);
+        int tokenIndex = fromPart.toUpperCase(Locale.ROOT).indexOf(baseToken.toUpperCase(Locale.ROOT));
+        String joinPart = tokenIndex == -1 ? "" : fromPart.substring(tokenIndex + baseToken.length()).trim();
 
         String wherePart = null;
         if (whereIndex != -1) {
@@ -357,18 +435,100 @@ public class SqlParser {
             limitPart = afterFrom.substring(start).trim();
         }
 
+        List<SqlCommand.JoinSpec> joins = parseJoinClauses(joinPart);
+
         List<String> projection = null;
         if (!projectionPart.equals("*")) {
             projection = new ArrayList<>();
             for (String item : splitTopLevel(projectionPart, ',')) {
-                projection.add(domainService.normalizeIdentifier(stripIdentifierQuotes(item.trim())));
+                projection.add(normalizeQualifiedIdentifier(stripIdentifierQuotes(item.trim())));
             }
         }
 
         SqlCommand.FilterExpression filters = parseFilterExpression(wherePart);
         List<SqlCommand.OrderBy> orderBy = parseOrderBy(orderPart);
         SqlCommand.Limit limit = parseLimit(limitPart);
-        return new SelectParts(tableName, projection, filters, orderBy, limit);
+        return new SelectParts(tableName, projection, filters, orderBy, limit, joins);
+    }
+
+    private List<SqlCommand.JoinSpec> parseJoinClauses(String joinPart) {
+        if (joinPart == null || joinPart.isBlank()) {
+            return List.of();
+        }
+        List<SqlCommand.JoinSpec> joins = new ArrayList<>();
+        String rest = joinPart.trim();
+        while (!rest.isEmpty()) {
+            JoinKeyword keyword = matchJoinKeyword(rest);
+            if (keyword == null) {
+                throw new IllegalArgumentException("JOIN 语法不支持: " + rest);
+            }
+            rest = rest.substring(keyword.keyword.length()).trim();
+            if (rest.isEmpty()) {
+                throw new IllegalArgumentException("JOIN 缺少表名");
+            }
+            String joinTableToken = extractIdentifierToken(rest);
+            if (joinTableToken.isEmpty()) {
+                throw new IllegalArgumentException("JOIN 缺少表名");
+            }
+            String joinTable = domainService.normalizeIdentifier(stripIdentifierQuotes(joinTableToken));
+            int tokenIndex = rest.toUpperCase(Locale.ROOT).indexOf(joinTableToken.toUpperCase(Locale.ROOT));
+            rest = tokenIndex == -1 ? "" : rest.substring(tokenIndex + joinTableToken.length()).trim();
+            if (!rest.toUpperCase(Locale.ROOT).startsWith("ON ")) {
+                throw new IllegalArgumentException("JOIN 缺少 ON 子句");
+            }
+            rest = rest.substring("ON ".length()).trim();
+            int nextJoinIndex = findNextJoinIndex(rest);
+            String onClause = nextJoinIndex == -1 ? rest.trim() : rest.substring(0, nextJoinIndex).trim();
+            rest = nextJoinIndex == -1 ? "" : rest.substring(nextJoinIndex).trim();
+
+            String[] onPair = onClause.split("=", 2);
+            if (onPair.length != 2) {
+                throw new IllegalArgumentException("JOIN ON 条件仅支持等值连接");
+            }
+            QualifiedColumn left = parseQualifiedColumn(onPair[0].trim());
+            QualifiedColumn right = parseQualifiedColumn(onPair[1].trim());
+            joins.add(new SqlCommand.JoinSpec(keyword.type, joinTable, left.table, left.column, right.table, right.column));
+        }
+        return joins;
+    }
+
+    private record JoinKeyword(SqlCommand.JoinType type, String keyword) {}
+
+    private JoinKeyword matchJoinKeyword(String text) {
+        String upper = text.toUpperCase(Locale.ROOT);
+        if (upper.startsWith("LEFT OUTER JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.LEFT, "LEFT OUTER JOIN ");
+        }
+        if (upper.startsWith("LEFT JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.LEFT, "LEFT JOIN ");
+        }
+        if (upper.startsWith("RIGHT OUTER JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.RIGHT, "RIGHT OUTER JOIN ");
+        }
+        if (upper.startsWith("RIGHT JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.RIGHT, "RIGHT JOIN ");
+        }
+        if (upper.startsWith("INNER JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.INNER, "INNER JOIN ");
+        }
+        if (upper.startsWith("JOIN ")) {
+            return new JoinKeyword(SqlCommand.JoinType.INNER, "JOIN ");
+        }
+        return null;
+    }
+
+    private int findNextJoinIndex(String text) {
+        String upper = text.toUpperCase(Locale.ROOT);
+        int leftOuter = findKeyword(upper, " LEFT OUTER JOIN ");
+        int left = findKeyword(upper, " LEFT JOIN ");
+        int rightOuter = findKeyword(upper, " RIGHT OUTER JOIN ");
+        int right = findKeyword(upper, " RIGHT JOIN ");
+        int inner = findKeyword(upper, " INNER JOIN ");
+        int specific = minPositive(leftOuter, left, rightOuter, right, inner);
+        if (specific != -1) {
+            return specific;
+        }
+        return findKeyword(upper, " JOIN ");
     }
 
     private UpdateParts parseUpdate(String sql) {
@@ -451,7 +611,7 @@ public class SqlParser {
                 if (left.isEmpty() || right.isEmpty()) {
                     break;
                 }
-                String column = domainService.normalizeIdentifier(stripIdentifierQuotes(left));
+                String column = normalizeQualifiedIdentifier(stripIdentifierQuotes(left));
                 Object value = parseLiteral(right);
                 return new SqlCommand.FilterPredicate(column, SqlCommand.Operator.fromSymbol(op), value);
             }
@@ -514,7 +674,7 @@ public class SqlParser {
             if (tokens.length == 0) {
                 continue;
             }
-            String column = domainService.normalizeIdentifier(stripIdentifierQuotes(tokens[0]));
+            String column = normalizeQualifiedIdentifier(stripIdentifierQuotes(tokens[0]));
             boolean asc = true;
             if (tokens.length > 1) {
                 asc = !tokens[1].equalsIgnoreCase("DESC");
@@ -853,7 +1013,7 @@ public class SqlParser {
     private record InsertParts(String tableName, List<String> columns, List<Object> values) {}
 
     private record SelectParts(String tableName, List<String> projection, SqlCommand.FilterExpression filters,
-                               List<SqlCommand.OrderBy> orderBy, SqlCommand.Limit limit) {}
+                               List<SqlCommand.OrderBy> orderBy, SqlCommand.Limit limit, List<SqlCommand.JoinSpec> joins) {}
 
     private record UpdateParts(String tableName, Map<String, Object> values, SqlCommand.FilterExpression filters) {}
 

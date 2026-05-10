@@ -61,4 +61,14 @@ public interface IntegrityGateway {
      * @return 校验问题列表；空列表表示全表校验通过
      */
     List<Map<String, Object>> validateTable(String schemaName, String tableName);
+
+    /**
+     * 校验删除操作是否违反参照完整性。
+     *
+     * @param schemaName 数据库名称
+     * @param tableName  表名
+     * @param filters    删除条件（字段名与值的映射）
+     * @return 违规列表；空列表表示可安全删除
+     */
+    List<Map<String, Object>> validateDelete(String schemaName, String tableName, Map<String, Object> filters);
 }

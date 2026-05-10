@@ -40,6 +40,24 @@ public class ColumnDefinition {
     private Integer length;
 
     /**
+     * 用户定义 CHECK 约束表达式（列级）。
+     */
+    @Schema(description = "CHECK 约束表达式", example = "CHECK (age >= 0)")
+    private String checkExpression;
+
+    /**
+     * 外键引用表名（列级）。
+     */
+    @Schema(description = "外键引用表", example = "dept")
+    private String foreignKeyTable;
+
+    /**
+     * 外键引用列名（列级）。
+     */
+    @Schema(description = "外键引用列", example = "id")
+    private String foreignKeyColumn;
+
+    /**
      * @return 字段名称。
      */
     public String getName() {
@@ -127,6 +145,48 @@ public class ColumnDefinition {
      */
     public void setLength(Integer length) {
         this.length = length;
+    }
+
+    /**
+     * @return CHECK 约束表达式。
+     */
+    public String getCheckExpression() {
+        return checkExpression;
+    }
+
+    /**
+     * @param checkExpression CHECK 表达式。
+     */
+    public void setCheckExpression(String checkExpression) {
+        this.checkExpression = checkExpression;
+    }
+
+    /**
+     * @return 外键引用表名。
+     */
+    public String getForeignKeyTable() {
+        return foreignKeyTable;
+    }
+
+    /**
+     * @param foreignKeyTable 外键引用表名。
+     */
+    public void setForeignKeyTable(String foreignKeyTable) {
+        this.foreignKeyTable = foreignKeyTable;
+    }
+
+    /**
+     * @return 外键引用列名。
+     */
+    public String getForeignKeyColumn() {
+        return foreignKeyColumn;
+    }
+
+    /**
+     * @param foreignKeyColumn 外键引用列名。
+     */
+    public void setForeignKeyColumn(String foreignKeyColumn) {
+        this.foreignKeyColumn = foreignKeyColumn;
     }
 }
 

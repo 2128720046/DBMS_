@@ -145,6 +145,7 @@ public class SqlExecutor {
                     ? normalizedDb
                     : StorageEngineConfig.getSystemSchemaName();
             tableApplicationService.createTable(targetDb, createTable.tableName(), createTable.columns());
+            applyInlineConstraints(targetDb, createTable.tableName(), createTable.columns());
             return buildMessagePayload("表创建成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.DropTable dropTable) {
@@ -187,6 +188,9 @@ public class SqlExecutor {
             return buildMessagePayload("插入成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Select select) {
+            if (select.joins() != null && !select.joins().isEmpty()) {
+                return executeJoinSelect(normalizedDb, select);
+            }
             List<Map<String, Object>> rows = fetchAllRows(normalizedDb, select.tableName());
             rows = filterRows(rows, select.filters());
             rows = sortRows(rows, select.orderBy());
@@ -410,6 +414,192 @@ public class SqlExecutor {
         } catch (Exception ignored) {
         }
         return List.of();
+    }
+
+    private void applyInlineConstraints(String databaseName, String tableName, List<ColumnDefinition> columns) {
+        if (columns == null || columns.isEmpty()) {
+            return;
+        }
+        for (ColumnDefinition column : columns) {
+            String columnName = column.getName();
+            if (column.getCheckExpression() != null && !column.getCheckExpression().isBlank()) {
+                String constraintName = "CK_" + tableName + "_" + columnName;
+                String parameter = column.getCheckExpression().trim();
+                if (!parameter.toUpperCase().startsWith("CHECK")) {
+                    parameter = "CHECK (" + parameter + ")";
+                }
+                integrityApplicationService.addConstraint(databaseName, tableName, constraintName,
+                        columnName, "CHECK", parameter);
+            }
+            if (column.getForeignKeyTable() != null && column.getForeignKeyColumn() != null) {
+                String constraintName = "FK_" + tableName + "_" + columnName;
+                String parameter = "FOREIGN KEY (" + columnName + ") REFERENCES "
+                        + column.getForeignKeyTable() + "(" + column.getForeignKeyColumn() + ")";
+                integrityApplicationService.addConstraint(databaseName, tableName, constraintName,
+                        columnName, "FOREIGN_KEY", parameter);
+            }
+        }
+    }
+
+    private Map<String, Object> executeJoinSelect(String databaseName, SqlCommand.Select select) {
+        List<Map<String, Object>> baseRows = fetchAllRows(databaseName, select.tableName());
+        List<Map<String, Object>> joined = new ArrayList<>();
+        for (Map<String, Object> row : baseRows) {
+            Map<String, Object> combined = new LinkedHashMap<>();
+            addQualifiedColumns(combined, select.tableName(), row);
+            joined.add(combined);
+        }
+        List<String> currentTables = new ArrayList<>();
+        currentTables.add(select.tableName());
+
+        for (SqlCommand.JoinSpec join : select.joins()) {
+            joined = applyJoin(databaseName, joined, currentTables, join);
+            if (!containsTable(currentTables, join.tableName())) {
+                currentTables.add(join.tableName());
+            }
+        }
+
+        joined = filterRows(joined, select.filters());
+        joined = sortRows(joined, select.orderBy());
+        joined = applyLimit(joined, select.limit());
+
+        List<String> columnOrder = select.projection();
+        if (columnOrder == null || columnOrder.isEmpty()) {
+            columnOrder = new ArrayList<>(joined.isEmpty() ? List.of() : joined.get(0).keySet());
+        }
+        return buildTablePayloadFromRows(joined, columnOrder);
+    }
+
+    private List<Map<String, Object>> applyJoin(String databaseName,
+                                                List<Map<String, Object>> currentRows,
+                                                List<String> currentTables,
+                                                SqlCommand.JoinSpec join) {
+        String joinTable = join.tableName();
+        boolean joinIsLeft = joinTable.equalsIgnoreCase(join.leftTable());
+        boolean joinIsRight = joinTable.equalsIgnoreCase(join.rightTable());
+        if (!joinIsLeft && !joinIsRight) {
+            throw new IllegalArgumentException("JOIN 表必须出现在 ON 条件中: " + joinTable);
+        }
+
+        String otherTable = joinIsLeft ? join.rightTable() : join.leftTable();
+        String otherColumn = joinIsLeft ? join.rightColumn() : join.leftColumn();
+        String joinColumn = joinIsLeft ? join.leftColumn() : join.rightColumn();
+        if (!containsTable(currentTables, otherTable)) {
+            throw new IllegalArgumentException("JOIN 依赖的表尚未出现: " + otherTable);
+        }
+
+        List<Map<String, Object>> joinRows = fetchAllRows(databaseName, joinTable);
+        List<String> joinColumns = readColumnOrder(databaseName, joinTable);
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        if (join.type() == SqlCommand.JoinType.RIGHT) {
+            Map<String, List<Map<String, Object>>> currentIndex = new LinkedHashMap<>();
+            for (Map<String, Object> current : currentRows) {
+                Object value = getQualifiedValue(current, otherTable, otherColumn);
+                String key = normalizeJoinKey(value);
+                currentIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(current);
+            }
+            Map<String, Object> nullBase = buildNullRowFromTemplate(currentRows);
+            for (Map<String, Object> row : joinRows) {
+                Object value = row.get(joinColumn);
+                String key = normalizeJoinKey(value);
+                List<Map<String, Object>> matches = currentIndex.get(key);
+                if (matches == null || matches.isEmpty()) {
+                    Map<String, Object> combined = new LinkedHashMap<>(nullBase);
+                    addQualifiedColumns(combined, joinTable, row);
+                    results.add(combined);
+                    continue;
+                }
+                for (Map<String, Object> current : matches) {
+                    Map<String, Object> combined = new LinkedHashMap<>(current);
+                    addQualifiedColumns(combined, joinTable, row);
+                    results.add(combined);
+                }
+            }
+            return results;
+        }
+
+        Map<String, List<Map<String, Object>>> joinIndex = new LinkedHashMap<>();
+        for (Map<String, Object> row : joinRows) {
+            Object value = row.get(joinColumn);
+            String key = normalizeJoinKey(value);
+            joinIndex.computeIfAbsent(key, k -> new ArrayList<>()).add(row);
+        }
+        for (Map<String, Object> current : currentRows) {
+            Object value = getQualifiedValue(current, otherTable, otherColumn);
+            String key = normalizeJoinKey(value);
+            List<Map<String, Object>> matches = joinIndex.get(key);
+            if (matches == null || matches.isEmpty()) {
+                if (join.type() == SqlCommand.JoinType.LEFT) {
+                    Map<String, Object> combined = new LinkedHashMap<>(current);
+                    addQualifiedColumns(combined, joinTable, buildNullRow(joinColumns));
+                    results.add(combined);
+                }
+                continue;
+            }
+            for (Map<String, Object> row : matches) {
+                Map<String, Object> combined = new LinkedHashMap<>(current);
+                addQualifiedColumns(combined, joinTable, row);
+                results.add(combined);
+            }
+        }
+        return results;
+    }
+
+    private boolean containsTable(List<String> tables, String target) {
+        for (String table : tables) {
+            if (table.equalsIgnoreCase(target)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private Object getQualifiedValue(Map<String, Object> row, String tableName, String column) {
+        String qualified = tableName + "." + column;
+        if (row.containsKey(qualified)) {
+            return row.get(qualified);
+        }
+        return row.get(column);
+    }
+
+    private void addQualifiedColumns(Map<String, Object> target, String tableName, Map<String, Object> row) {
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String qualified = tableName + "." + entry.getKey();
+            target.put(qualified, entry.getValue());
+            if (!target.containsKey(entry.getKey())) {
+                target.put(entry.getKey(), entry.getValue());
+            }
+        }
+    }
+
+    private Map<String, Object> buildNullRow(List<String> columns) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        if (columns == null) {
+            return row;
+        }
+        for (String col : columns) {
+            row.put(col, null);
+        }
+        return row;
+    }
+
+    private Map<String, Object> buildNullRowFromTemplate(List<Map<String, Object>> rows) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        if (rows == null || rows.isEmpty()) {
+            return row;
+        }
+        for (String key : rows.get(0).keySet()) {
+            row.put(key, null);
+        }
+        return row;
+    }
+
+    private String normalizeJoinKey(Object value) {
+        if (value == null) {
+            return "__NULL__";
+        }
+        return String.valueOf(value);
     }
 
     private List<Map<String, Object>> fetchAllRows(String databaseName, String tableName) {

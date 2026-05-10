@@ -313,6 +313,11 @@ public class NativeRecordGatewayImpl implements RecordGateway {
 
     @Override
     public int delete(String schemaName, String tableName, Map<String, Object> filters) {
+        List<Map<String, Object>> issues = integrityGateway.validateDelete(schemaName, tableName, filters);
+        if (issues != null && !issues.isEmpty()) {
+            Map<String, Object> first = issues.get(0);
+            throw new IllegalArgumentException("违反参照完整性: " + first);
+        }
         List<FieldMeta> metas = parseTdf(schemaName, tableName);
         String trdPath = StorageEngineConfig.getDATA_DIR() + File.separator + schemaName + File.separator + tableName + ".trd";
         int recordLength = 4;

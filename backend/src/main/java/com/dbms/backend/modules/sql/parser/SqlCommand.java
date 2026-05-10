@@ -39,8 +39,20 @@ public interface SqlCommand {
      */
     record Insert(String tableName, List<String> columns, List<Object> values) implements SqlCommand {}
 
-    record Select(String tableName, List<String> projection, FilterExpression filters, List<OrderBy> orderBy, Limit limit)
+    record Select(String tableName, List<String> projection, FilterExpression filters, List<OrderBy> orderBy,
+                  Limit limit, List<JoinSpec> joins)
             implements SqlCommand {}
+
+    /**
+     * JOIN 语义描述（仅支持单次等值内连接）。
+     */
+    record JoinSpec(JoinType type, String tableName, String leftTable, String leftColumn, String rightTable, String rightColumn) {}
+
+    enum JoinType {
+        INNER,
+        LEFT,
+        RIGHT
+    }
 
     record Update(String tableName, Map<String, Object> values, FilterExpression filters) implements SqlCommand {}
 
