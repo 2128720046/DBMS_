@@ -95,10 +95,14 @@ public class InMemorySecurityGateway implements SecurityGateway {
             }
         } catch (Exception e) {
             System.err.println("[Security] 加载用户数据文件失败，使用默认配置: " + e.getMessage());
-            // 文件损坏时，确保 admin 存在即可
+            // 文件损坏/为空时，重置并重新创建
+            users.clear();
+            userPermissions.clear();
         }
         // 始终确保 admin 用户存在
-        users.putIfAbsent("admin", hashPassword("admin123"));
+        if (users.putIfAbsent("admin", hashPassword("admin123")) == null) {
+            saveToFile(); // 首次添加 admin 时落盘，修复空文件不创建 admin 的 Bug
+        }
     }
 
     /**
@@ -192,7 +196,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
                 perms.add(formatPermission(p, objectName));
             }
         } else {
-            perms.add(formatPermission(privilege.toUpperCase(), objectName));
+            for (String priv : privilege.split(",")) {
+                perms.add(formatPermission(priv.trim().toUpperCase(), objectName));
+            }
         }
         saveToFile();
     }
@@ -213,7 +219,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
                 perms.remove(formatPermission(p, objectName));
             }
         } else {
-            perms.remove(formatPermission(privilege.toUpperCase(), objectName));
+            for (String priv : privilege.split(",")) {
+                perms.remove(formatPermission(priv.trim().toUpperCase(), objectName));
+            }
         }
         saveToFile();
     }
