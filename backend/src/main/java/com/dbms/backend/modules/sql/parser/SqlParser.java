@@ -163,6 +163,9 @@ public class SqlParser {
         if (upper.equals("SHOW CLIENTS")) {
             return new SqlCommand.ShowClients();
         }
+        if (upper.equals("SHOW USERS")) {
+            return new SqlCommand.ShowUsers();
+        }
         throw new IllegalArgumentException("暂不支持的 SQL 语句");
     }
 

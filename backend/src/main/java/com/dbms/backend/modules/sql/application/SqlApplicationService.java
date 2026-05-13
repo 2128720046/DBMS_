@@ -1,6 +1,7 @@
 package com.dbms.backend.modules.sql.application;
 
 import com.dbms.backend.core.capability.EngineCapabilityPolicy;
+import com.dbms.backend.modules.log.infrastructure.RequestLogger;
 import com.dbms.backend.modules.sql.executor.SqlExecutor;
 import com.dbms.backend.modules.sql.parser.SqlCommand;
 import com.dbms.backend.modules.sql.parser.SqlParser;
@@ -35,21 +36,25 @@ public class SqlApplicationService {
     /** SQL 执行器，将结构化命令路由到应用服务 */
     private final SqlExecutor sqlExecutor;
 
+    /** 请求日志记录器 */
+    private final RequestLogger requestLogger;
+
     /**
      * 构造方法。
      *
-     * @param domainService    数据库领域服务
      * @param capabilityPolicy 引擎能力策略
-     * @param databaseApplicationService 数据库应用服务
-     * @param tableApplicationService    表应用服务
-     * @param recordApplicationService   记录应用服务
+     * @param sqlParser        SQL 解析器
+     * @param sqlExecutor      SQL 执行器
+     * @param requestLogger    请求日志记录器
      */
     public SqlApplicationService(EngineCapabilityPolicy capabilityPolicy,
                                  SqlParser sqlParser,
-                                 SqlExecutor sqlExecutor) {
+                                 SqlExecutor sqlExecutor,
+                                 RequestLogger requestLogger) {
         this.capabilityPolicy = capabilityPolicy;
         this.sqlParser = sqlParser;
         this.sqlExecutor = sqlExecutor;
+        this.requestLogger = requestLogger;
     }
 
     /**
@@ -84,14 +89,29 @@ public class SqlApplicationService {
      * @throws IllegalArgumentException 如果 SQL 为空
      * @throws IllegalStateException    如果 SQL 执行失败
      */
-    public Map<String, Object> execute(String databaseName, String sql) {
+    public Map<String, Object> execute(String databaseName, String sql, String token) {
         if (sql == null || sql.isBlank()) {
             throw new IllegalArgumentException("SQL 不能为空");
         }
-        String normalizedSql = normalizeSql(sql);
-        capabilityPolicy.assertSqlAllowed(normalizedSql, ALLOWED_PREFIX);
-        SqlCommand command = sqlParser.parse(normalizedSql);
-        return sqlExecutor.execute(databaseName, normalizedSql, command);
+        long startTime = System.currentTimeMillis();
+        try {
+            String normalizedSql = normalizeSql(sql);
+            capabilityPolicy.assertSqlAllowed(normalizedSql, ALLOWED_PREFIX);
+            SqlCommand command = sqlParser.parse(normalizedSql);
+            Map<String, Object> result = sqlExecutor.execute(databaseName, normalizedSql, command, token);
+
+            String resultType = (String) result.getOrDefault("type", "unknown");
+            Object affectedRaw = result.get("affectedRows");
+            int affectedRows = (affectedRaw instanceof Number n) ? n.intValue() : 0;
+            long elapsed = System.currentTimeMillis() - startTime;
+
+            requestLogger.log(databaseName, sql, true, resultType, affectedRows, elapsed, null);
+            return result;
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - startTime;
+            requestLogger.log(databaseName, sql, false, "error", 0, elapsed, e.getMessage());
+            throw e;
+        }
     }
 }
 

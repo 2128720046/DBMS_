@@ -62,6 +62,13 @@ public class ClientApplicationService {
     }
 
     /**
+     * 断开指定用户的所有客户端连接。
+     */
+    public void disconnectByUsername(String username) {
+        sessionRegistry.unregisterByUsername(username);
+    }
+
+    /**
      * 列出在线客户端 ID 列表。
      * <p>
      * 该方法保持返回 {@code List<String>} 以兼容 SqlExecutor 中的现有调用。

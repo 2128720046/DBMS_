@@ -3,14 +3,9 @@ import Layout from '../views/Layout.vue'
 
 const routes = [
   {
-    path: '/login',
-    name: 'Login',
-    component: () => import('../views/Login.vue')
-  },
-  {
     path: '/',
     component: Layout,
-    // 修复问题2：默认进入 SQL 控制台
+    // 默认进入 SQL 控制台
     redirect: '/sql', 
     children: [
       {
@@ -62,6 +57,24 @@ const routes = [
         meta: { title: '索引与约束管理' }
       },
       {
+        path: 'transaction',
+        name: 'TransactionManage',
+        component: () => import('../views/TransactionManage.vue'),
+        meta: { title: '事务监控' }
+      },
+      {
+        path: 'users',
+        name: 'UserManage',
+        component: () => import('../views/UserManage.vue'),
+        meta: { title: '用户权限管理', requiresAdmin: true }
+      },
+      {
+        path: 'clients',
+        name: 'ClientManage',
+        component: () => import('../views/ClientManage.vue'),
+        meta: { title: '客户端会话', requiresAdmin: true }
+      },
+      {
         path: 'settings',
         name: 'SystemSettings',
         component: () => import('../views/SystemSettings.vue'),
@@ -74,6 +87,24 @@ const routes = [
 const router = createRouter({
   history: createWebHistory(),
   routes
+})
+
+// 路由守卫：管理员页面仅允许 admin 用户访问
+router.beforeEach((to, from, next) => {
+  if (to.meta && to.meta.requiresAdmin) {
+    try {
+      const userStr = sessionStorage.getItem('dbms-user')
+      if (userStr) {
+        const user = JSON.parse(userStr)
+        if (user.username === 'admin') {
+          return next()
+        }
+      }
+    } catch (e) {}
+    // 非管理员跳转到控制台
+    return next('/sql')
+  }
+  next()
 })
 
 export default router

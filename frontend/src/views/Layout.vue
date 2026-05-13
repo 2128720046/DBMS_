@@ -5,64 +5,95 @@
         <div class="g-logo">G</div>
         <span class="app-title">DBMS Studio</span>
       </div>
-      
+
       <div class="toolbar-actions">
         <el-button-group>
-          <el-button icon="Plus" plain @click="$router.push('/database')">连接</el-button>
+          <el-button icon="Plus" plain @click="showLoginDialog">连接</el-button>
           <el-button icon="Refresh" plain @click="refreshTree">刷新</el-button>
         </el-button-group>
-        
+
         <el-divider direction="vertical" />
-        
+
         <el-button-group>
-          <el-button icon="Coin" @click="$router.push('/database')">数据库</el-button>
-          <el-button icon="Grid" @click="$router.push('/table')">数据表</el-button>
-          <el-button icon="Document" @click="$router.push('/record')">数据浏览</el-button>
-          <el-button icon="Monitor" @click="$router.push('/sql')">SQL终端</el-button>
+          <el-button icon="Coin" @click="requireLogin('/database')">数据库</el-button>
+          <el-button icon="Grid" @click="requireLogin('/table')">数据表</el-button>
+          <el-button icon="Document" @click="requireLogin('/record')">数据浏览</el-button>
+          <el-button icon="Monitor" @click="requireLogin('/sql')">SQL终端</el-button>
           <el-button icon="DocumentCopy" @click="goBackupPage">备份恢复</el-button>
+          <el-button icon="Right" @click="requireLogin('/transaction')">事务</el-button>
         </el-button-group>
       </div>
 
       <div class="user-profile">
-        <el-dropdown>
-          <span class="user-link">
-            Admin <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="$router.push('/settings')">系统设置</el-dropdown-item>
-              <el-dropdown-item divided @click="handleLogout">退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
+        <template v-if="isLoggedIn">
+          <el-dropdown>
+            <span class="user-link">
+              <el-tag :type="isAdmin ? 'danger' : 'info'" size="small" effect="plain" style="margin-right: 6px;">
+                {{ isAdmin ? '管理员' : '用户' }}
+              </el-tag>
+              {{ displayName }} <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item v-if="isAdmin" @click="$router.push('/users')">
+                  <el-icon><User /></el-icon> 用户权限管理
+                </el-dropdown-item>
+                <el-dropdown-item v-if="isAdmin" @click="$router.push('/clients')">
+                  <el-icon><Connection /></el-icon> 客户端会话
+                </el-dropdown-item>
+                <el-dropdown-item @click="$router.push('/settings')">
+                  <el-icon><Setting /></el-icon> 系统设置
+                </el-dropdown-item>
+                <el-dropdown-item divided @click="handleLogout">
+                  <el-icon><SwitchButton /></el-icon> 退出登录
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+        </template>
+        <template v-else>
+          <el-button type="primary" size="small" @click="showLoginDialog">登录 / 注册</el-button>
+        </template>
       </div>
     </el-header>
 
     <el-container class="lower-container">
-      <el-aside width="260px" class="object-tree-aside">
-        <div class="tree-filter">
-          <el-input v-model="filterText" placeholder="搜索数据库/表..." prefix-icon="Search" clearable size="small" />
-        </div>
-        <el-scrollbar>
-          <el-tree
-            ref="treeRef"
-            :data="treeData"
-            :props="defaultProps"
-            highlight-current
-            :filter-node-method="filterNode"
-            @node-click="handleNodeClick"
-          >
-            <template #default="{ node, data }">
-              <span class="custom-tree-node">
-                <el-icon v-if="data.type === 'db'" color="#5c6b77"><Coin /></el-icon>
-                <el-icon v-else-if="data.type === 'table'" color="#8ba3b8"><Grid /></el-icon>
-                <span class="node-label">{{ node.label }}</span>
-                <span v-if="data.size" class="node-extra">{{ data.size }}</span>
-              </span>
-            </template>
-          </el-tree>
-        </el-scrollbar>
-      </el-aside>
+      <!-- 未登录时显示提示，隐藏数据库树 -->
+      <template v-if="isLoggedIn">
+        <el-aside width="260px" class="object-tree-aside">
+          <div class="tree-filter">
+            <el-input v-model="filterText" placeholder="搜索数据库/表..." prefix-icon="Search" clearable size="small" />
+          </div>
+          <el-scrollbar>
+            <el-tree
+              ref="treeRef"
+              :data="treeData"
+              :props="defaultProps"
+              highlight-current
+              :filter-node-method="filterNode"
+              @node-click="handleNodeClick"
+            >
+              <template #default="{ node, data }">
+                <span class="custom-tree-node">
+                  <el-icon v-if="data.type === 'db'" color="#5c6b77"><Coin /></el-icon>
+                  <el-icon v-else-if="data.type === 'table'" color="#8ba3b8"><Grid /></el-icon>
+                  <span class="node-label">{{ node.label }}</span>
+                  <span v-if="data.size" class="node-extra">{{ data.size }}</span>
+                </span>
+              </template>
+            </el-tree>
+          </el-scrollbar>
+        </el-aside>
+      </template>
+      <template v-else>
+        <el-aside width="260px" class="object-tree-aside">
+          <div class="login-prompt">
+            <el-icon :size="36" color="#d0d5dd"><Lock /></el-icon>
+            <p>请先登录以查看数据库</p>
+            <el-button type="primary" size="small" @click="showLoginDialog">前往登录</el-button>
+          </div>
+        </el-aside>
+      </template>
 
       <el-main class="main-workspace">
         <div class="tags-view-container" v-if="visitedViews.length > 0">
@@ -90,28 +121,50 @@
             </keep-alive>
           </router-view>
         </div>
-        
+
         <footer class="status-bar">
           <div class="log-preview">
             <el-icon><InfoFilled /></el-icon>
             <span>就绪. 当前路由: {{ currentRouteTitle }}</span>
           </div>
           <div class="connection-info">
-            <span>Localhost (H2)</span>
+            <span>{{ isLoggedIn ? `已登录: ${displayName}` : '未登录' }}</span>
             <el-divider direction="vertical" />
-            <span>UTF-8</span>
+            <span>DBMS</span>
           </div>
         </footer>
       </el-main>
     </el-container>
+
+    <!-- 登录对话框 -->
+    <el-dialog v-model="loginDialogVisible" title="登录" width="400px" align-center :close-on-click-modal="false">
+      <el-form :model="loginForm" label-position="top" @keyup.enter="handleLoginSubmit">
+        <el-form-item label="用户名">
+          <el-input v-model="loginForm.username" placeholder="输入用户名" :prefix-icon="UserIcon" clearable />
+        </el-form-item>
+        <el-form-item label="密码">
+          <el-input v-model="loginForm.password" type="password" show-password placeholder="输入密码" :prefix-icon="Lock" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <div style="display: flex; justify-content: flex-end; gap: 12px;">
+          <el-button @click="loginDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="loginLoading" @click="handleLoginSubmit">登录</el-button>
+        </div>
+      </template>
+    </el-dialog>
   </el-container>
 </template>
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { listDatabases, listTables } from '../api/dbms'
-import { ArrowDown, InfoFilled, Coin, Grid, Plus, Refresh, Document, Monitor, DocumentCopy } from '@element-plus/icons-vue'
+import { listDatabases, listTables, login, disconnectSelf } from '../api/dbms'
+import { ElMessage } from 'element-plus'
+import {
+  ArrowDown, InfoFilled, Coin, Grid, Plus, Refresh, Document, Monitor,
+  DocumentCopy, User, Connection, Setting, SwitchButton, User as UserIcon, Lock, Right
+} from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -122,13 +175,106 @@ const treeData = ref([])
 const defaultProps = { label: 'name', children: 'children' }
 const currentRouteTitle = computed(() => route.meta?.title || '控制台')
 
-// Tabs State for Keep-Alive and Multi-Page Document Support
+// =========== 登录状态（使用 ref 而非 computed，确保登录后即时更新） ===========
+
+const isLoggedIn = ref(!!sessionStorage.getItem('dbms-token'))
+const isAdmin = ref(checkIsAdmin())
+const displayName = ref(getDisplayName())
+
+function checkIsAdmin() {
+  try {
+    const userStr = sessionStorage.getItem('dbms-user')
+    if (userStr) return JSON.parse(userStr).username === 'admin'
+  } catch (e) {}
+  return false
+}
+
+function getDisplayName() {
+  try {
+    const userStr = sessionStorage.getItem('dbms-user')
+    if (userStr) {
+      const user = JSON.parse(userStr)
+      return user.username || '未知'
+    }
+  } catch (e) {}
+  return '未登录'
+}
+
+/** 登录/登出后同步更新 UI 状态 */
+function syncLoginState() {
+  isLoggedIn.value = !!sessionStorage.getItem('dbms-token')
+  isAdmin.value = checkIsAdmin()
+  displayName.value = getDisplayName()
+  // 登录成功后刷新数据库树
+  if (isLoggedIn.value) {
+    refreshTree()
+    // 通知所有 keep-alive 页面刷新数据
+    window.dispatchEvent(new Event('dbms-login-changed'))
+  }
+}
+
+// =========== 导航按钮需登录才能访问 ===========
+
+const requireLogin = (path) => {
+  if (!isLoggedIn.value) {
+    ElMessage.warning('请先登录')
+    showLoginDialog()
+    return
+  }
+  router.push(path)
+}
+
+const goBackupPage = () => {
+  if (!isLoggedIn.value) {
+    ElMessage.warning('请先登录')
+    showLoginDialog()
+    return
+  }
+  const query = route.query?.db ? { db: route.query.db } : {}
+  router.push({ path: '/backup', query })
+}
+
+// =========== 登录对话框 ===========
+
+const loginDialogVisible = ref(false)
+const loginLoading = ref(false)
+const loginForm = ref({ username: '', password: '' })
+
+const showLoginDialog = () => {
+  loginForm.value = { username: '', password: '' }
+  loginDialogVisible.value = true
+}
+
+const handleLoginSubmit = async () => {
+  if (!loginForm.value.username || !loginForm.value.password) {
+    return ElMessage.warning('用户名和密码不能为空')
+  }
+
+  loginLoading.value = true
+  try {
+    const res = await login({ username: loginForm.value.username, password: loginForm.value.password })
+    const payload = res?.data || {}
+    if (payload.token) {
+      sessionStorage.setItem('dbms-token', payload.token)
+    }
+    sessionStorage.setItem('dbms-user', JSON.stringify(payload))
+
+    loginDialogVisible.value = false
+    syncLoginState()
+    ElMessage.success(`登录成功，欢迎 ${loginForm.value.username}`)
+  } catch (error) {
+    ElMessage.error(error.message || '登录失败')
+  } finally {
+    loginLoading.value = false
+  }
+}
+
+// =========== Tabs ===========
+
 const visitedViews = ref([])
 const activeTab = ref('')
 
 watch(route, (newRoute) => {
-  if (newRoute.path === '/login') return
-
   let title = newRoute.meta?.title || '主页'
   if (newRoute.query.table) {
     title = `表: ${newRoute.query.table}`
@@ -164,24 +310,30 @@ const onTabRemove = (targetName) => {
       }
     })
   }
-  
   activeTab.value = current
   visitedViews.value = tabs.filter(tab => tab.fullPath !== targetName)
   router.push(current)
 }
 
-const handleLogout = () => {
-  localStorage.removeItem('dbms-token')
-  localStorage.removeItem('dbms-user')
-  router.push('/login')
+const handleLogout = async () => {
+  try {
+    await disconnectSelf()
+  } catch (e) {
+    // 即使后端断开失败，本地也要清理
+  }
+  sessionStorage.removeItem('dbms-token')
+  sessionStorage.removeItem('dbms-user')
+  treeData.value = []
+  syncLoginState()
+  ElMessage.success('已退出登录')
+  // 重新弹出登录框
+  showLoginDialog()
 }
 
-const goBackupPage = () => {
-  const query = route.query?.db ? { db: route.query.db } : {}
-  router.push({ path: '/backup', query })
-}
+// =========== 数据库树 ===========
 
 const refreshTree = async () => {
+  if (!sessionStorage.getItem('dbms-token')) return
   try {
     const res = await listDatabases()
     const dbs = res.data || []
@@ -205,9 +357,7 @@ const refreshTree = async () => {
   }
 }
 
-const handleTreeRefresh = () => {
-  refreshTree()
-}
+const handleTreeRefresh = () => { refreshTree() }
 
 const filterNode = (value, data) => {
   if (!value) return true
@@ -227,6 +377,9 @@ const handleNodeClick = (data) => {
 }
 
 onMounted(() => {
+  if (!isLoggedIn.value) {
+    showLoginDialog()
+  }
   refreshTree()
   window.addEventListener('dbms-tree-refresh', handleTreeRefresh)
 })
@@ -371,7 +524,7 @@ onBeforeUnmount(() => {
   padding: 10px;
   overflow-y: auto;
   overflow-x: hidden;
-  height: calc(100% - 66px); /* subtract tags view and status bar heights */
+  height: calc(100% - 66px);
   position: relative;
 }
 
@@ -393,17 +546,27 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
-/* 路由平滑过渡动画 */
-.fade-slide-enter-active,
-.fade-slide-leave-active {
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+.login-prompt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: #909399;
+  padding: 40px 20px;
+  text-align: center;
 }
-.fade-slide-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
+
+.login-prompt p {
+  margin: 0;
+  font-size: 14px;
 }
-.fade-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-10px);
+
+@media (max-width: 960px) {
+  .toolbar-actions .el-button-group .el-button {
+    padding: 8px 10px;
+    font-size: 12px;
+  }
 }
 </style>

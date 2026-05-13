@@ -98,7 +98,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onActivated, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -257,6 +257,12 @@ watch(selectedDatabase, async (value) => {
 onMounted(async () => {
   await loadDatabases()
   await fetchBackups()
+})
+
+onActivated(async () => {
+  if (selectedDatabase.value) {
+    await fetchBackups()
+  }
 })
 </script>
 

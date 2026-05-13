@@ -523,6 +523,10 @@ public class TodoIntegrityGatewayImpl implements IntegrityGateway {
 
     private boolean matchCheckExpression(Map<String, Object> row, CheckExpression expr) {
         Object value = getValueIgnoreCase(row, expr.column);
+        // 标准 SQL：CHECK 约束结果为 UNKNOWN（值为 NULL）时视为通过
+        if (value == null) {
+            return true;
+        }
         Object literal = parseLiteral(expr.literal);
         int cmp = compareValue(value, literal);
         return switch (expr.operator) {

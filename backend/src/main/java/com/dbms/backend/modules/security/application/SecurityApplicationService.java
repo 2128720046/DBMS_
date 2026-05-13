@@ -3,6 +3,7 @@ package com.dbms.backend.modules.security.application;
 import com.dbms.backend.modules.security.domain.SecurityGateway;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,5 +62,20 @@ public class SecurityApplicationService {
     /** 断言用户具有指定权限 */
     public void assertAllowed(String username, String schemaName, String objectName, String permission) {
         securityGateway.assertAllowed(username, schemaName, objectName, permission);
+    }
+
+    /** 根据令牌解析用户名 */
+    public String resolveByToken(String token) {
+        return securityGateway.resolveByToken(token);
+    }
+
+    /** 列出所有已注册用户 */
+    public List<String> listAllUsers() {
+        return securityGateway.listAllUsers();
+    }
+
+    /** 使指定用户的所有令牌失效（强制下线） */
+    public void invalidateTokensByUsername(String username) {
+        securityGateway.invalidateTokensByUsername(username);
     }
 }

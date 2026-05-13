@@ -1,5 +1,6 @@
 package com.dbms.backend.modules.security.domain;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -80,4 +81,26 @@ public interface SecurityGateway {
      * @param permission 需要的权限
      */
     void assertAllowed(String username, String schemaName, String objectName, String permission);
+
+    /**
+     * 根据令牌解析用户名。
+     *
+     * @param token 登录时返回的访问令牌
+     * @return 用户名；令牌无效时返回 null
+     */
+    String resolveByToken(String token);
+
+    /**
+     * 列出所有已注册用户。
+     *
+     * @return 用户名列表
+     */
+    List<String> listAllUsers();
+
+    /**
+     * 使指定用户的所有令牌失效（用于强制下线）。
+     *
+     * @param username 用户名
+     */
+    void invalidateTokensByUsername(String username);
 }

@@ -12,6 +12,8 @@ public class SqlExecuteRequest {
     private String databaseName;
     @Schema(description = "SQL 语句", example = "SELECT * FROM users;")
     private String sql;
+    @Schema(description = "登录令牌（登录时返回）", example = "YWRtaW46ZGJtcw==")
+    private String token;
 
     public String getDatabaseName() {
         return databaseName;
@@ -27,6 +29,14 @@ public class SqlExecuteRequest {
 
     public void setSql(String sql) {
         this.sql = sql;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
     }
 }
 

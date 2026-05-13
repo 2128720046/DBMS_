@@ -95,6 +95,18 @@
                 </template>
             </el-table-column>
             
+             <el-table-column label="Check约束" width="130">
+                <template #default="scope">
+                    <el-input v-model="scope.row.check" size="small" placeholder="例: > 0" />
+                </template>
+            </el-table-column>
+
+             <el-table-column label="外键(目标表.字段)" width="160">
+                <template #default="scope">
+                    <el-input v-model="scope.row.fk" size="small" placeholder="例: users.id" />
+                </template>
+            </el-table-column>
+
              <el-table-column label="注释">
                 <template #default="scope">
                      <el-input v-model="scope.row.comment" />
@@ -146,36 +158,39 @@ const splitType = (typeText) => {
     }
 }
 
-onMounted(() => {
+onMounted(async () => {
    if(route.query.db && route.query.table) {
       currentDb.value = route.query.db
       currentTable.value = route.query.table
-
-        getTableDetail(currentDb.value, currentTable.value)
-          .then((response) => {
-             const list = response?.data?.columns || response?.data || response?.columns || []
-             columns.value = list.map((column) => {
-                 const typeParts = splitType(column.type)
-                 return {
-                    id: genId(),
-                    name: column.name,
-                    type: typeParts.type,
-                    length: typeParts.length,
-                    nn: Boolean(column.nn),
-                    pk: column.key === 'PRI',
-                    uq: false,
-                    ai: false,
-                    defaultVal: column.default || '',
-                    comment: ''
-                 }
-             })
-             ElMessage.success('字段列表已加载')
-          })
-          .catch((error) => {
-             ElMessage.error(error.message || '加载字段失败')
-          })
+      await loadColumns()
    }
 })
+
+async function loadColumns() {
+  try {
+    const response = await getTableDetail(currentDb.value, currentTable.value)
+    const list = response?.data?.columns || []
+    columns.value = list.map((column) => {
+        const typeParts = splitType(column.type)
+        return {
+           id: genId(),
+           name: column.name,
+           type: typeParts.type,
+           length: typeParts.length,
+           nn: Boolean(column.nn),
+           pk: Boolean(column.pk),
+           uq: Boolean(column.uq),
+           ai: false,
+           defaultVal: column.default || '',
+           check: '',
+           fk: '',
+           comment: ''
+        }
+    })
+  } catch (error) {
+    ElMessage.error(error.message || '加载字段失败')
+  }
+}
 
 // Validation helpers
 const needsLength = (type) => ['VARCHAR', 'CHAR', 'DECIMAL'].includes(type?.toUpperCase())
@@ -183,10 +198,11 @@ const isInteger = (type) => ['INT', 'BIGINT', 'TINYINT'].includes(type?.toUpperC
 
 const handlePkChange = (row, isPk) => {
     if (isPk) {
-        row.nn = true // PK implies NN
-        row.uq = false // UI usually doesn't need to check UQ if PK is checked
+        row.nn = true
+        row.uq = true  // PK 自动附带 UNIQUE
     } else {
-        row.ai = false // Only PK can auto increment usually (in MySQL logic, H2 is similar)
+        row.ai = false
+        row.uq = false
     }
 }
 
@@ -201,6 +217,8 @@ const addEmptyRow = () => {
         uq: false,
         ai: false,
         defaultVal: '',
+        check: '',
+        fk: '',
         comment: ''
     })
 }
@@ -210,7 +228,6 @@ const delRow = (index) => {
 }
 
 const saveChanges = async () => {
-    // Basic validation
     for (const col of columns.value) {
         if (!col.name.trim()) return ElMessage.error('字段名不能为空')
         if (needsLength(col.type) && !col.length) return ElMessage.error(`${col.name} 字段需要指定长度`)
@@ -218,19 +235,25 @@ const saveChanges = async () => {
 
     saving.value = true
     try {
-                const payload = {
-                    name: currentTable.value,
-                    columns: columns.value.map((col) => ({
-                        name: col.name.trim(),
-                        type: col.type,
-                        length: col.length ? Number(col.length) : undefined,
-                        nullable: !Boolean(col.nn),
-                        pk: Boolean(col.pk),
-                        uq: Boolean(col.uq)
-                    }))
-                }
-                await updateTableStructure(currentDb.value, currentTable.value, payload)
+        const payload = {
+            name: currentTable.value,
+            columns: columns.value.map((col) => ({
+                name: col.name.trim(),
+                type: col.type,
+                length: col.length ? Number(col.length) : undefined,
+                nullable: !Boolean(col.nn),
+                pk: Boolean(col.pk),
+                uq: Boolean(col.pk) || Boolean(col.uq),
+                checkExpression: col.check ? `CHECK (${col.name} ${col.check})` : undefined,
+                foreignKeyTable: col.fk ? col.fk.split('.')[0] : undefined,
+                foreignKeyColumn: col.fk ? col.fk.split('.')[1] : undefined
+            }))
+        }
+        await updateTableStructure(currentDb.value, currentTable.value, payload)
         ElMessage.success('表结构变更保存成功')
+        router.push({ path: '/table', query: { db: currentDb.value } })
+    } catch (e) {
+        ElMessage.error(e.message || '保存字段结构失败')
     } finally {
         saving.value = false
     }

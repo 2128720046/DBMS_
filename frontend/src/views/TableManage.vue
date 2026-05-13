@@ -309,6 +309,9 @@ const handleCreate = async () => {
   if (!form.value.name.trim()) return ElMessage.warning('表名不能为空')
   if (form.value.columns.length === 0) return ElMessage.warning('请至少添加一个字段')
 
+  const hasPk = form.value.columns.some(col => col.pk)
+  if (!hasPk) return ElMessage.warning('请至少选择一个字段作为主键 (PK)')
+
   for (const column of form.value.columns) {
     if (!column.name.trim()) return ElMessage.warning('字段名不能为空')
     if (needsLength(column.type)) {
@@ -328,16 +331,23 @@ const handleCreate = async () => {
       length: needsLength(col.type) ? Number(String(col.length || '').trim()) : null,
       nullable: !col.nn,
       pk: !!col.pk,
-      uq: !!col.uq
+      uq: !!col.pk || !!col.uq,
+      checkExpression: col.check ? `CHECK (${col.name} ${col.check})` : undefined,
+      foreignKeyTable: col.fk ? col.fk.split('.')[0] : undefined,
+      foreignKeyColumn: col.fk ? col.fk.split('.')[1] : undefined
     }))
   }
 
-  await createTable(currentDb.value, payload)
-  dialogVisible.value = false
-  form.value = { name: '', comment: '', columns: [] }
-  await fetchTables()
-  window.dispatchEvent(new Event('dbms-tree-refresh'))
-  ElMessage.success('创建成功')
+  try {
+    await createTable(currentDb.value, payload)
+    dialogVisible.value = false
+    form.value = { name: '', comment: '', columns: [] }
+    await fetchTables()
+    window.dispatchEvent(new Event('dbms-tree-refresh'))
+    ElMessage.success('创建成功')
+  } catch (e) {
+    ElMessage.error(e.message || '创建表失败')
+  }
 }
 
 watch(() => route.query.db, async (dbName) => {

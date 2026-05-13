@@ -63,7 +63,10 @@ public class SqlExecutor {
         this.clientApplicationService = clientApplicationService;
     }
 
-    public Map<String, Object> execute(String databaseName, String normalizedSql, SqlCommand command) {
+    public Map<String, Object> execute(String databaseName, String normalizedSql, SqlCommand command, String token) {
+        // 解析当前登录用户（token 为空或无效时，username 为 null，表示匿名请求）
+        String currentUser = resolveUser(token);
+
         if (command instanceof SqlCommand.ShowDatabases) {
             return buildDatabaseListPayload();
         }
@@ -71,34 +74,46 @@ public class SqlExecutor {
             return buildMessagePayload("已切换数据库", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.CreateDatabase createDatabase) {
+            assertPermission(currentUser, createDatabase.databaseName(), "*", "CREATE");
             databaseApplicationService.createDatabase(createDatabase.databaseName());
             return buildMessagePayload("数据库创建成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.DropDatabase dropDatabase) {
+            assertPermission(currentUser, dropDatabase.databaseName(), "*", "DROP");
             databaseApplicationService.dropDatabase(dropDatabase.databaseName());
             return buildMessagePayload("数据库删除成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.CreateUser createUser) {
+            assertAdmin(currentUser, "CREATE USER");
             securityApplicationService.register(createUser.username(), createUser.password());
             return buildMessagePayload("用户创建成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.DropUser dropUser) {
+            assertAdmin(currentUser, "DROP USER");
             securityApplicationService.dropUser(dropUser.username());
             return buildMessagePayload("用户删除成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.AlterUser alterUser) {
+            assertAdmin(currentUser, "ALTER USER");
             securityApplicationService.alterUser(alterUser.username(), alterUser.password());
             return buildMessagePayload("用户修改成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.GrantPrivilege grant) {
+            assertAdmin(currentUser, "GRANT");
             securityApplicationService.grant(grant.username(), grant.privilege(), grant.objectName());
             return buildMessagePayload("权限授予成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.RevokePrivilege revoke) {
+            assertAdmin(currentUser, "REVOKE");
             securityApplicationService.revoke(revoke.username(), revoke.privilege(), revoke.objectName());
             return buildMessagePayload("权限撤销成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.Connect connect) {
+            // 清理该用户的旧会话，使管理员页面 SHOW CLIENTS 不显示重复记录
+            // 注意：不销毁旧 token，这样同一用户多标签页可共存
+            String oldUsername = connect.username();
+            clientApplicationService.disconnectByUsername(oldUsername);
+
             Map<String, Object> user = securityApplicationService.login(connect.username(), connect.password());
             String clientId = clientApplicationService.connect(connect.username());
             Map<String, Object> payload = new LinkedHashMap<>();
@@ -115,15 +130,43 @@ public class SqlExecutor {
         if (command instanceof SqlCommand.Disconnect disconnect) {
             String clientId = disconnect.clientId();
             if (clientId != null && !clientId.isEmpty()) {
+                // 管理员断开指定客户端：先查出用户名再去清理（断开后 session 消失会查不到）
+                String targetUsername = null;
+                for (var s : clientApplicationService.listOnlineClientDetails()) {
+                    if (clientId.equals(String.valueOf(s.get("CLIENT_ID")))) {
+                        targetUsername = String.valueOf(s.get("USER"));
+                        break;
+                    }
+                }
                 clientApplicationService.disconnect(clientId);
+                if (targetUsername != null) {
+                    securityApplicationService.invalidateTokensByUsername(targetUsername);
+                }
+            } else if (currentUser != null) {
+                // 自己断开：清理当前用户的所有会话和令牌
+                clientApplicationService.disconnectByUsername(currentUser);
+                securityApplicationService.invalidateTokensByUsername(currentUser);
             }
             return buildMessagePayload("连接已断开", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.ShowClients) {
+            assertAdmin(currentUser, "SHOW CLIENTS");
             List<Map<String, Object>> rows = clientApplicationService.listOnlineClientDetails();
             return buildTablePayloadFromRows(rows, List.of(
                     "CLIENT_ID", "USER", "IP_ADDRESS", "PORT", "CONNECTED_AT", "CURRENT_DATABASE"
             ));
+        }
+        if (command instanceof SqlCommand.ShowUsers) {
+            assertAdmin(currentUser, "SHOW USERS");
+            List<String> allUsers = securityApplicationService.listAllUsers();
+            List<Map<String, Object>> rows = new ArrayList<>();
+            for (String user : allUsers) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("USERNAME", user);
+                row.put("ROLE", "admin".equals(user) ? "管理员" : "普通用户");
+                rows.add(row);
+            }
+            return buildTablePayloadFromRows(rows, List.of("USERNAME", "ROLE"));
         }
         if (command instanceof SqlCommand.ShowGrants showGrants) {
             Map<String, Object> row = new LinkedHashMap<>();
@@ -144,23 +187,29 @@ public class SqlExecutor {
             String targetDb = databaseName != null && !databaseName.isEmpty()
                     ? normalizedDb
                     : StorageEngineConfig.getSystemSchemaName();
+            assertPermission(currentUser, targetDb, createTable.tableName(), "CREATE");
             tableApplicationService.createTable(targetDb, createTable.tableName(), createTable.columns());
             applyInlineConstraints(targetDb, createTable.tableName(), createTable.columns());
             return buildMessagePayload("表创建成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.DropTable dropTable) {
+            assertPermission(currentUser, normalizedDb, dropTable.tableName(), "DROP");
             tableApplicationService.dropTable(normalizedDb, dropTable.tableName());
             return buildMessagePayload("表删除成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.AlterTable alterTable) {
+            assertPermission(currentUser, normalizedDb, alterTable.tableName(), "ALTER");
             applyAlterTable(normalizedDb, alterTable);
             return buildMessagePayload("表结构更新成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.ReplaceColumns replaceColumns) {
+            assertPermission(currentUser, normalizedDb, replaceColumns.tableName(), "ALTER");
             tableApplicationService.updateTableStructure(normalizedDb, replaceColumns.tableName(), replaceColumns.columns());
+            applyInlineConstraints(normalizedDb, replaceColumns.tableName(), replaceColumns.columns());
             return buildMessagePayload("表结构更新成功", 0, normalizedSql);
         }
         if (command instanceof SqlCommand.Insert insert) {
+            assertPermission(currentUser, normalizedDb, insert.tableName(), "INSERT");
             Map<String, Object> values = new LinkedHashMap<>();
             List<String> columns = insert.columns();
             List<Object> rawValues = insert.values();
@@ -203,6 +252,7 @@ public class SqlExecutor {
             return buildMessagePayload("插入成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Select select) {
+            assertPermission(currentUser, normalizedDb, select.tableName(), "SELECT");
             if (select.joins() != null && !select.joins().isEmpty()) {
                 return executeJoinSelect(normalizedDb, select);
             }
@@ -217,6 +267,7 @@ public class SqlExecutor {
             return buildTablePayloadFromRows(rows, columnOrder);
         }
         if (command instanceof SqlCommand.Update update) {
+            assertPermission(currentUser, normalizedDb, update.tableName(), "UPDATE");
             assertSimpleFilter(update.filters(), "UPDATE");
 
             // 事务内：先查询旧值用于可能的回滚
@@ -254,6 +305,7 @@ public class SqlExecutor {
             return buildMessagePayload("更新成功", affected, normalizedSql);
         }
         if (command instanceof SqlCommand.Delete delete) {
+            assertPermission(currentUser, normalizedDb, delete.tableName(), "DELETE");
             assertSimpleFilter(delete.filters(), "DELETE");
 
             // 事务内：先查询被删除的行用于可能的回滚
@@ -288,15 +340,18 @@ public class SqlExecutor {
                     List.of("name", "columns", "unique", "ascending"));
         }
         if (command instanceof SqlCommand.CreateIndex createIndex) {
+            assertPermission(currentUser, normalizedDb, createIndex.tableName(), "INDEX");
             indexApplicationService.createIndex(normalizedDb, createIndex.tableName(), createIndex.indexName(),
                     createIndex.columns(), createIndex.unique(), createIndex.ascending());
             return buildMessagePayload("索引创建成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.DropIndex dropIndex) {
+            assertPermission(currentUser, normalizedDb, dropIndex.tableName(), "INDEX");
             indexApplicationService.dropIndex(normalizedDb, dropIndex.tableName(), dropIndex.indexName());
             return buildMessagePayload("索引删除成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.RebuildIndex rebuildIndex) {
+            assertPermission(currentUser, normalizedDb, rebuildIndex.tableName(), "INDEX");
             indexApplicationService.rebuildIndex(normalizedDb, rebuildIndex.tableName(), rebuildIndex.indexName());
             return buildMessagePayload("索引重建成功", 1, normalizedSql);
         }
@@ -305,11 +360,13 @@ public class SqlExecutor {
                     List.of("name", "type", "column", "parameter"));
         }
         if (command instanceof SqlCommand.AddConstraint addConstraint) {
+            assertPermission(currentUser, normalizedDb, addConstraint.tableName(), "ALTER");
             integrityApplicationService.addConstraint(normalizedDb, addConstraint.tableName(), addConstraint.constraintName(),
                     "", "RAW", addConstraint.definition());
             return buildMessagePayload("约束创建成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.DropConstraint dropConstraint) {
+            assertPermission(currentUser, normalizedDb, dropConstraint.tableName(), "ALTER");
             integrityApplicationService.dropConstraint(normalizedDb, dropConstraint.tableName(), dropConstraint.constraintName());
             return buildMessagePayload("约束删除成功", 1, normalizedSql);
         }
@@ -344,14 +401,17 @@ public class SqlExecutor {
                     List.of("name", "size", "updatedAt", "desc"));
         }
         if (command instanceof SqlCommand.BackupDatabase backupDatabase) {
+            assertPermission(currentUser, backupDatabase.databaseName(), "*", "BACKUP");
             maintenanceApplicationService.backup(backupDatabase.databaseName(), java.nio.file.Path.of(backupDatabase.targetPath()));
             return buildMessagePayload("备份创建成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.RestoreDatabase restoreDatabase) {
+            assertPermission(currentUser, restoreDatabase.databaseName(), "*", "RESTORE");
             maintenanceApplicationService.restore(restoreDatabase.databaseName(), java.nio.file.Path.of(restoreDatabase.backupPath()));
             return buildMessagePayload("数据库还原成功", 1, normalizedSql);
         }
         if (command instanceof SqlCommand.DeleteBackup deleteBackup) {
+            assertPermission(currentUser, deleteBackup.databaseName(), "*", "RESTORE");
             maintenanceApplicationService.deleteBackup(deleteBackup.databaseName(), deleteBackup.backupName());
             return buildMessagePayload("备份删除成功", 1, normalizedSql);
         }
@@ -897,6 +957,37 @@ public class SqlExecutor {
             }
         }
         return -1;
+    }
+
+    /**
+     * 根据 token 解析当前登录用户名。
+     * token 为空或无效时返回 null，表示未登录/匿名请求。
+     */
+    private String resolveUser(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        return securityApplicationService.resolveByToken(token);
+    }
+
+    /**
+     * 断言当前用户对指定对象拥有指定权限。
+     * 未登录（username 为 null）时拒绝所有操作。
+     */
+    private void assertPermission(String username, String schemaName, String objectName, String permission) {
+        if (username == null) {
+            throw new IllegalArgumentException("请先登录后再执行操作");
+        }
+        securityApplicationService.assertAllowed(username, schemaName, objectName, permission);
+    }
+
+    /**
+     * 断言当前用户是管理员（admin），仅管理员可执行用户管理/授权等操作。
+     */
+    private void assertAdmin(String username, String operation) {
+        if (username == null || !"admin".equals(username)) {
+            throw new IllegalArgumentException("仅管理员可执行 " + operation + " 操作");
+        }
     }
 }
 

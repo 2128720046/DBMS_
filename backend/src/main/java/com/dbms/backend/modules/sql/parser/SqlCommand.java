@@ -107,6 +107,8 @@ public interface SqlCommand {
 
     record ShowClients() implements SqlCommand {}
 
+    record ShowUsers() implements SqlCommand {}
+
     enum AlterAction {
         ADD,
         DROP,

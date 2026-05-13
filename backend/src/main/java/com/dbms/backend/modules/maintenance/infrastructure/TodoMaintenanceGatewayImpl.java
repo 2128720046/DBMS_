@@ -171,6 +171,32 @@ public class TodoMaintenanceGatewayImpl implements MaintenanceGateway {
         if (backupPath == null) {
             return null;
         }
+        // 'auto' 关键字：自动选择最新的 .bak 文件
+        String raw = backupPath.toString().trim();
+        if (raw.isBlank() || raw.equalsIgnoreCase("auto")) {
+            Path schemaBackupDir = backupDir(schemaName);
+            if (!Files.exists(schemaBackupDir)) {
+                return null;
+            }
+            try (var stream = Files.list(schemaBackupDir)) {
+                var latest = stream
+                        .filter(p -> p.getFileName().toString().toLowerCase().endsWith(".bak"))
+                        .max((a, b) -> {
+                            try {
+                                return Files.getLastModifiedTime(a).compareTo(Files.getLastModifiedTime(b));
+                            } catch (IOException e) {
+                                return 0;
+                            }
+                        });
+                if (latest.isPresent()) {
+                    return latest.get();
+                }
+            } catch (IOException e) {
+                throw new RuntimeException("读取备份目录失败: " + e.getMessage(), e);
+            }
+            return null;
+        }
+
         if (backupPath.isAbsolute() && Files.exists(backupPath)) {
             return backupPath;
         }

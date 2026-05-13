@@ -5,6 +5,7 @@ import com.dbms.backend.modules.client.domain.SessionInfo;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -47,5 +48,27 @@ public class InMemoryClientSessionRegistry implements ClientSessionRegistry {
     @Override
     public List<SessionInfo> listOnlineClientDetails() {
         return List.copyOf(sessions.values());
+    }
+
+    @Override
+    public List<String> findClientIdsByUsername(String username) {
+        if (username == null || username.isBlank()) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (Map.Entry<String, SessionInfo> entry : sessions.entrySet()) {
+            if (username.equalsIgnoreCase(entry.getValue().getUsername())) {
+                result.add(entry.getKey());
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public void unregisterByUsername(String username) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+        sessions.entrySet().removeIf(e -> username.equalsIgnoreCase(e.getValue().getUsername()));
     }
 }

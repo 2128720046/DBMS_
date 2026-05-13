@@ -102,40 +102,44 @@ const handleSqlExecuteCommand = (cmd) => {
 const extractTargetSql = (mode) => {
   if (mode === 'all') return sqlCode.value.trim();
 
-  // Try to find selected or current line
-  const textarea = sqlInputRef.value?.textarea || document.querySelector('.monaco-like-editor textarea');
-  if (textarea) {
+  // 获取原生 textarea 元素
+  let textarea = null
+  try {
+    // Element Plus el-input 的 textarea 属性指向原生 textarea
+    if (sqlInputRef.value) {
+      textarea = sqlInputRef.value.textarea || sqlInputRef.value.$el?.querySelector('textarea')
+    }
+  } catch (e) {}
+  if (!textarea) {
+    textarea = document.querySelector('.monaco-like-editor textarea')
+  }
+
+  if (textarea && typeof textarea.selectionStart === 'number') {
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
+    const fullText = sqlCode.value;
     
     if (start !== end) {
-      // User highlighted text
-      return sqlCode.value.substring(start, end).trim();
-    } else {
-      // User didn't highlight, find current line or statement
-      const fullText = sqlCode.value;
-      const statements = fullText.split(';').map(s => s + ';');
-      
-      let curIndex = 0;
-      for (let stmt of statements) {
-        let nextIndex = curIndex + stmt.length;
-        if (start >= curIndex && start <= nextIndex) {
-           return stmt.trim();
-        }
-        curIndex = nextIndex;
+      // 用户选中了文本 → 执行选中的内容
+      return fullText.substring(start, end).trim();
+    }
+
+    // 未选中文本 → 执行光标所在的语句（按分号拆分）
+    const lines = fullText.split('\n');
+    let charPos = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lineStart = charPos;
+      const lineEnd = charPos + line.length;
+      if (start >= lineStart && start <= lineEnd + 1) {
+        // 光标在当前行 → 返回当前行（去掉末尾可能的分号）
+        return line.replace(/;\s*$/, '').trim();
       }
-      
-      // Fallback to the current physical line if semi-colon split fails weirdly
-      const lines = fullText.split('\n');
-      let lengthAcc = 0;
-      for (let line of lines) {
-        if (start >= lengthAcc && start <= lengthAcc + line.length + 1) {
-          return line.trim();
-        }
-        lengthAcc += line.length + 1;
-      }
+      charPos += line.length + 1; // +1 for \n
     }
   }
+
+  // 兜底：返回全部 SQL
   return sqlCode.value.trim();
 }
 

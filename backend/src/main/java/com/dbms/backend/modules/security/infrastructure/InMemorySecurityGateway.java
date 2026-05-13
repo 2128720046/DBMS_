@@ -38,6 +38,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
     /** 用户名 → 授予的权限条目集合（每项格式: "privilege:database.object"） */
     private final Map<String, Set<String>> userPermissions = new ConcurrentHashMap<>();
 
+    /** 令牌 → 用户名映射（用于会话级权限校验） */
+    private final Map<String, String> tokenToUsername = new ConcurrentHashMap<>();
+
     /** 所有可用的权限类型 */
     private static final Set<String> ALL_PRIVILEGES = Set.of(
             "SELECT", "INSERT", "UPDATE", "DELETE", "CREATE",
@@ -103,6 +106,22 @@ public class InMemorySecurityGateway implements SecurityGateway {
         if (users.putIfAbsent("admin", hashPassword("admin123")) == null) {
             saveToFile(); // 首次添加 admin 时落盘，修复空文件不创建 admin 的 Bug
         }
+
+        // 兼容旧数据：对已有但无权限的非 admin 用户自动授予 SELECT ON *.*
+        boolean needSave = false;
+        for (String user : users.keySet()) {
+            if (!isAdmin(user)) {
+                Set<String> perms = userPermissions.computeIfAbsent(user, k -> new CopyOnWriteArraySet<>());
+                String selectAll = formatPermission("SELECT", "*.*");
+                if (!perms.contains(selectAll)) {
+                    perms.add(selectAll);
+                    needSave = true;
+                }
+            }
+        }
+        if (needSave) {
+            saveToFile();
+        }
     }
 
     /**
@@ -146,7 +165,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
                 throw new IllegalArgumentException("用户名或密码错误");
             }
         }
-        return Base64.getEncoder().encodeToString((username + ":dbms").getBytes(StandardCharsets.UTF_8));
+        String token = Base64.getEncoder().encodeToString((username + ":dbms").getBytes(StandardCharsets.UTF_8));
+        tokenToUsername.put(token, username);
+        return token;
     }
 
     @Override
@@ -154,6 +175,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
         if (users.putIfAbsent(username, hashPassword(password)) != null) {
             throw new IllegalArgumentException("用户已存在");
         }
+        // 新注册用户自动授予 SELECT ON *.* 权限
+        Set<String> perms = userPermissions.computeIfAbsent(username, k -> new CopyOnWriteArraySet<>());
+        perms.add(formatPermission("SELECT", "*.*"));
         saveToFile();
     }
 
@@ -257,8 +281,9 @@ public class InMemorySecurityGateway implements SecurityGateway {
             } else {
                 String[] objParts = obj.split("\\.", 2);
                 if (objParts.length == 2) {
-                    boolean schemaMatch = matchAllSchema || objParts[0].equalsIgnoreCase(schemaName);
-                    boolean objMatch = matchAllObject || objParts[1].equalsIgnoreCase(objectName) || "*".equals(objParts[1]);
+                    // 支持 *.* 通配符：objParts[0]="*" 匹配所有库，objParts[1]="*" 匹配所有表
+                    boolean schemaMatch = matchAllSchema || "*".equals(objParts[0]) || objParts[0].equalsIgnoreCase(schemaName);
+                    boolean objMatch = matchAllObject || "*".equals(objParts[1]) || objParts[1].equalsIgnoreCase(objectName);
                     if (schemaMatch && objMatch) {
                         result.add(privilege + " ON " + obj);
                     }
@@ -280,6 +305,27 @@ public class InMemorySecurityGateway implements SecurityGateway {
             throw new IllegalStateException("用户 '" + username + "' 没有权限: " + permission
                     + " ON " + schemaName + "." + objectName);
         }
+    }
+
+    @Override
+    public String resolveByToken(String token) {
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+        return tokenToUsername.get(token);
+    }
+
+    @Override
+    public List<String> listAllUsers() {
+        return List.copyOf(users.keySet());
+    }
+
+    @Override
+    public void invalidateTokensByUsername(String username) {
+        if (username == null || username.isBlank()) {
+            return;
+        }
+        tokenToUsername.entrySet().removeIf(e -> username.equalsIgnoreCase(e.getValue()));
     }
 
     // ==================== 内部工具 ====================

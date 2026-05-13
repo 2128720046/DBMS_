@@ -138,7 +138,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onActivated, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Minus, Search, Tickets, Grid, Delete, Refresh } from '@element-plus/icons-vue'
@@ -188,6 +188,9 @@ async function syncContext() {
 const resetTable = async () => {
     currentTable.value = ''
     tableOptions.value = []
+    records.value = []
+    columns.value = []
+    pagination.value = { page: 1, size: 50, total: 0 }
     await fetchTables()
 }
 
@@ -216,18 +219,23 @@ const handleTableChange = async () => {
 }
 
 const fetchRecords = async () => {
+    if (!currentTable.value) return
     const filters = {}
     queryForm.value.conditions
         .filter((c) => c.field && c.value !== '')
         .forEach((c) => { filters[c.field] = c.value })
 
-    const res = await queryRecords(currentDb.value, currentTable.value, {
-        page: pagination.value.page,
-        size: pagination.value.size,
-        filters
-    })
-    records.value = res.data?.list || []
-    pagination.value.total = res.data?.total || 0
+    try {
+        const res = await queryRecords(currentDb.value, currentTable.value, {
+            page: pagination.value.page,
+            size: pagination.value.size,
+            filters
+        })
+        records.value = res.data?.list || []
+        pagination.value.total = res.data?.total || 0
+    } catch (e) {
+        ElMessage.error(e.message || '查询记录失败')
+    }
 }
 
 const addCond = () => queryForm.value.conditions.push({ field: '', op: '=', value: '' })
@@ -235,23 +243,45 @@ const removeCond = (idx) => queryForm.value.conditions.splice(idx, 1)
 
 const deleteRow = (index, row) => {
     const key = columns.value[0]?.prop
+    if (!key) return ElMessage.warning('无法确定主键字段')
     ElMessageBox.confirm('确定删除该记录吗？', '提示').then(async () => {
-        await deleteRecord(currentDb.value, currentTable.value, { filters: { [key]: row[key] } })
-        await fetchRecords()
-        ElMessage.success('已删除')
-    })
+        try {
+            await deleteRecord(currentDb.value, currentTable.value, { filters: { [key]: row[key] } })
+            await fetchRecords()
+            ElMessage.success('已删除')
+        } catch (e) {
+            ElMessage.error(e.message || '删除失败')
+        }
+    }).catch(() => {})
 }
 
 const handleInsert = async () => {
-    await insertRecord(currentDb.value, currentTable.value, { values: newRecord.value })
-    dialogVisible.value = false
-    newRecord.value = {}
-    await fetchRecords()
-    ElMessage.success('已插入')
+    if (!columns.value.length) return ElMessage.warning('表结构未加载')
+    try {
+        await insertRecord(currentDb.value, currentTable.value, { values: { ...newRecord.value } })
+        dialogVisible.value = false
+        newRecord.value = {}
+        ElMessage.success('已插入')
+        await fetchRecords()
+    } catch (e) {
+        ElMessage.error(e.message || '插入失败')
+    }
 }
 
 onMounted(async () => {
     await fetchDatabases()
+    if (route.query.db && route.query.table) {
+        currentDb.value = String(route.query.db)
+        currentTable.value = String(route.query.table)
+        await syncContext()
+    }
+})
+
+// keep-alive 缓存下切换回此页面时自动刷新数据
+onActivated(async () => {
+    if (currentDb.value && currentTable.value) {
+        await fetchRecords()
+    }
 })
 </script>
 

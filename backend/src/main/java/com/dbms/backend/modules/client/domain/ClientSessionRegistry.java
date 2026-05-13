@@ -51,4 +51,19 @@ public interface ClientSessionRegistry {
      * @return 在线客户端详情列表
      */
     List<SessionInfo> listOnlineClientDetails();
+
+    /**
+     * 根据用户名查找所有在线会话的客户端 ID。
+     *
+     * @param username 用户名
+     * @return 客户端 ID 列表
+     */
+    List<String> findClientIdsByUsername(String username);
+
+    /**
+     * 注销指定用户名的所有客户端会话。
+     *
+     * @param username 用户名
+     */
+    void unregisterByUsername(String username);
 }

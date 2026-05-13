@@ -55,7 +55,8 @@ public class SqlController {
     @PostMapping("/execute")
     @Operation(summary = "执行 SQL", description = "执行 SQL 语句并返回结果集或影响行数。")
     public ApiResponse<Map<String, Object>> execute(@RequestBody SqlExecuteRequest request) {
-        return ApiResponse.ok("执行成功", sqlApplicationService.execute(request.getDatabaseName(), request.getSql()));
+        return ApiResponse.ok("执行成功",
+                sqlApplicationService.execute(request.getDatabaseName(), request.getSql(), request.getToken()));
     }
 }
 
